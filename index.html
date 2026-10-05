@@ -323,7 +323,7 @@ table.ct tr.tot td{font-weight:600; border-top:1px solid var(--ink)}
     <span class="sep"></span>
     <button class="btn presu-only" data-act="loadBase">Cargar base de precios</button>
     <button class="btn presu-only" data-act="updateBase" title="Compara los precios del presupuesto con la base cargada">Actualizar precios</button>
-    <button class="btn presu-only" data-act="importMeas">Importar mediciones Revit</button>
+    <button class="btn presu-only" data-act="importMeas" title="Tablas de Revit, archivo del Conversor CYPE o cualquier CSV o JSON con códigos de partida">Importar mediciones</button>
     <button class="btn presu-only" data-act="reforma">Reforma por estancias</button>
     <span class="sep"></span>
     <button class="btn presu-only" data-act="exportBC3">Exportar BC3</button>
@@ -373,7 +373,7 @@ table.ct tr.tot td{font-weight:600; border-top:1px solid var(--ink)}
 
 <input type="file" id="fBase" accept=".bc3,.BC3" class="hidden">
 <input type="file" id="fOpen" accept=".bc3,.BC3,.json" class="hidden">
-<datalist id="aceroList"></datalist>
+<datalist id="aceroList"></datalist><datalist id="aceroListBar"></datalist>
 <input type="file" id="fRooms" accept=".csv,.txt,.json" class="hidden">
 <input type="file" id="fMeas" accept=".csv,.txt,.json,.tsv" class="hidden">
 <div id="toast" role="status" aria-live="polite"></div>
@@ -1130,6 +1130,16 @@ function aceroAplicar(l){
   return true;
 }
 const esKg = it => /^kg$/i.test(String(it.unit || "").trim());
+/* Qué prontuario tiene sentido en la partida, según su descripción: «perfil» (laminados, tubos, cerrajería…),
+   «barra» (acero corrugado: solo diámetros) o nada. Se puede activar a mano en cualquier partida en kg. */
+function aceroModo(it){
+  if (!esKg(it)) return null;
+  if (it.useProntuario) return "perfil";
+  const t = (String(it.summary || "") + " " + String(it.text || "")).toUpperCase();
+  if (/\bS\s?2[37]5|\bS\s?355|LAMINAD|PERFIL|TUBO|\bIPE\b|\bHE[ABM]\b|\bUPN\b|ESTRUCTURA MET|CERRAJ|PLETINA|ANGULAR|CHAPA/.test(t)) return "perfil";
+  if (/CORRUGAD|B\s?500|B\s?400|ARMADUR|FERRALLA/.test(t)) return "barra";
+  return null;
+}
 /* Despuntes y solapes: línea automática al final, recalculada con el resto */
 function syncIncr(it){
   const pct = parseNum(it.incr);
@@ -1171,13 +1181,14 @@ function itemDetail(it){
     <table class="t"><thead><tr><th>Código</th><th>Ud</th><th>Resumen</th><th class="num">Rend.</th><th class="num">Precio</th><th class="num">Importe</th></tr></thead><tbody>
     ${dec.rows.map(r => `<tr><td>${esc(r.code)}</td><td>${esc(r.unit)}</td><td>${esc(r.summary)}</td><td class="num">${m3(r.rend * r.factor)}</td><td class="num">${m2(r.price)}</td><td class="num">${m2(r.imp)}</td></tr>`).join("")}
     </tbody></table></div></details>` : "";
-  const kg = esKg(it);
+  const kgMode = aceroModo(it), kg = !!kgMode;
+  const kgLocked = l => !!l.bim && !l.pf && isBlank(l.h);   // líneas que ya traen los kg (CYPE, Revit…)
   const lines = it.lines.map((l, i) => l.bim === "AUTO:despuntes" ? `<tr data-li="${i}" data-auto="1" class="auto-row">
       <td colspan="${kg ? 3 : 2}">${esc(l.c)}</td><td class="num">${esc(numStr(l.n).replace(".", ","))}</td><td class="num al-l">${m2(parseNum(l.l))}</td><td></td><td></td>
       <td class="w-p parc">${m2(lineParcial(l))}</td><td></td></tr>` : `<tr data-li="${i}">
       <td><input data-lf="c" value="${esc(l.c)}" aria-label="Comentario"></td>
       <td class="w-id"><input data-lf="bim" value="${esc(l.bim || "")}" aria-label="Id del elemento" placeholder="—"></td>
-      ${kg ? `<td class="w-pf"><input data-lf="pf" list="aceroList" value="${esc(l.pf || "")}" placeholder="—" title="Opcional: escribe un perfil (IPE 120, #100x100x5, Ø12…) y se pone su peso por metro" aria-label="Perfil" class="${l.pf && !ACERO.lookup(l.pf) ? "pf-bad" : ""}"></td>` : ""}
+      ${kg ? `<td class="w-pf"><input data-lf="pf" list="${kgMode === "barra" ? "aceroListBar" : "aceroList"}" value="${esc(l.pf || "")}" placeholder="—" ${kgLocked(l) ? 'disabled title="Esta línea ya trae los kg"' : `title="Opcional: escribe ${kgMode === "barra" ? "el diámetro (Ø12…)" : "un perfil (IPE 120, #100x100x5, PL 100x10…)"} y se pone su peso por metro"`} aria-label="Perfil" class="${l.pf && !ACERO.lookup(l.pf) ? "pf-bad" : ""}"></td>` : ""}
       <td class="w-n"><input class="num" data-lf="n" inputmode="decimal" value="${esc(numStr(l.n))}" aria-label="Unidades"></td>
       <td class="w-d"><input class="num" data-lf="l" inputmode="decimal" value="${esc(numStr(l.l))}" aria-label="Largo"></td>
       <td class="w-d"><input class="num" data-lf="a" inputmode="decimal" value="${esc(numStr(l.a))}" aria-label="Ancho"></td>
@@ -1193,11 +1204,12 @@ function itemDetail(it){
   <details class="blk"${it.text ? "" : ""}><summary>Texto descriptivo <em>${it.text ? it.text.length + " caracteres" : "vacío"}</em></summary><div class="blk-body"><label class="f"><textarea data-if="text" aria-label="Texto descriptivo">${esc(it.text)}</textarea></label></div></details>
   ${decHtml}
   <details class="blk" open><summary>Mediciones <em>${hasLines ? `${it.lines.length} líneas · ${it.lines.filter(l => !isBlank(l.bim)).length} con Id` : "cantidad directa"}</em></summary><div class="blk-body">
-    ${hasLines ? `<div class="meas-wrap"><table class="t meas" id="measTable"><thead><tr><th>Comentario</th><th title="Id del elemento en el modelo (Revit, IFC…)">Id</th>${kg ? `<th title="Perfil del prontuario: escribe o elige (IPE 120, HEB 200, #100x100x5, Ø12, PL 100x10, CH 8…)">Perfil</th>` : ""}<th class="num">Uds</th><th class="num">Largo</th><th class="num">Ancho</th><th class="num">${kg ? "kg/m · kg/m²" : "Alto"}</th><th class="num">Parcial</th><th></th></tr></thead><tbody>${lines}</tbody></table></div>`
+    ${hasLines ? `<div class="meas-wrap"><table class="t meas" id="measTable"><thead><tr><th>Comentario</th><th title="Id del elemento en el modelo (Revit, IFC…)">Id</th>${kg ? `<th title="${kgMode === "barra" ? "Diámetro de la barra (Ø6, Ø8, Ø10…)" : "Perfil del prontuario: IPE 120, HEB 200, #100x100x5, PL 100x10, CH 8…"}">${kgMode === "barra" ? "Ø barra" : "Perfil"}</th>` : ""}<th class="num">Uds</th><th class="num">Largo</th><th class="num">Ancho</th><th class="num">${kgMode === "barra" ? "kg/m" : kg ? "kg/m · kg/m²" : "Alto"}</th><th class="num">Parcial</th><th></th></tr></thead><tbody>${lines}</tbody></table></div>`
       : `<div class="grid" style="grid-template-columns:160px 1fr"><label class="f">Cantidad<input class="num" data-if="qty" inputmode="decimal" value="${esc(numStr(it.qty))}"></label></div>`}
     <div class="meas-foot"><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><button class="btn small" data-act="addLine">+ Línea</button><button class="btn small" data-act="pasteLines">Pegar desde Excel</button>
-      ${kg ? `<label class="incr">Despuntes y solapes <input class="num" data-if="incr" inputmode="decimal" value="${esc(numStr(it.incr || ""))}" placeholder="0"> %</label>` : ""}</div>
-    <span class="hint">${kg ? "Escribe el perfil y el peso por metro se pone solo (en chapas y mallas, kg/m²: Largo × Ancho). " : ""}Las celdas vacías no multiplican, como en Presto.</span></div>
+      ${esKg(it) && !kg ? `<button class="btn small ghost" data-act="usarProntuario">Usar prontuario de acero</button>` : ""}
+      ${kgMode === "perfil" ? `<label class="incr">Despuntes y solapes <input class="num" data-if="incr" inputmode="decimal" value="${esc(numStr(it.incr || ""))}" placeholder="0"> %</label>` : ""}</div>
+    <span class="hint">${kgMode === "perfil" ? "Escribe el perfil y el peso por metro se pone solo (en chapas y mallas, kg/m²: Largo × Ancho). " : kgMode === "barra" ? "Para medir una armadura por metros de barra, escribe el diámetro y se pone su peso por metro. " : ""}Las celdas vacías no multiplican, como en Presto.</span></div>
   </div></details>
   <div class="big-tot"><div><span>Medición (${esc(it.unit || "ud")})</span><b id="dQty">${m2(itemQty(it))}</b></div><div><span>Precio</span><b id="dPrice">${m2(it.price)}</b></div><div><span>Importe</span><b id="dImp">${m2(itemImporte(it))} €</b></div></div>`;
 }
@@ -1398,6 +1410,7 @@ const actions = {
     catch(e){ console.error(e); toast("No se ha podido generar el PDF"); }
   },
   up(){ move(-1); }, down(){ move(1); },
+  usarProntuario(){ const f = findItem(sel.item); if (!f) return; f.item.useProntuario = true; markDirty(); renderDetailInner(); },
   baseToggle(){
     const off = document.body.classList.toggle("base-off");
     try { localStorage.setItem("srgex:baseOff", off ? "1" : ""); } catch(e){}
@@ -1470,10 +1483,10 @@ const actions = {
   open(){ $("#fOpen").value = ""; $("#fOpen").click(); },
   loadBase(){ $("#fBase").value = ""; $("#fBase").click(); },
   importMeas(){
-    modal("Importar mediciones de Revit", `<p>Si vuelves a importar, la app sincroniza por Id de elemento: actualiza lo que ha cambiado, añade lo nuevo y retira lo que ya no está, sin tocar las líneas que hayas metido a mano. Acepta CSV (separado por punto y coma, coma o tabulador) o JSON. La columna de código debe coincidir con el código de la partida; el resto es opcional:</p>
+    modal("Importar mediciones", `<p>Sirve para tablas de planificación de Revit, para el archivo que genera el Conversor CYPE y para cualquier CSV o JSON con códigos de partida.</p><p>Si vuelves a importar, la app sincroniza por Id de elemento: actualiza lo que ha cambiado, añade lo nuevo y retira lo que ya no está, sin tocar las líneas que hayas metido a mano. Acepta CSV (separado por punto y coma, coma o tabulador) o JSON. La columna de código debe coincidir con el código de la partida; el resto es opcional:</p>
       <pre>codigo;comentario;uds;largo;ancho;alto;id
 E04SA020;Solera planta baja;1;124,50;;;512334</pre>
-      <p>También reconoce cabeceras de tablas de Revit como Nota clave, Recuento, Área, Longitud, Volumen o Id. Si la partida no está en el presupuesto pero sí en la base, se crea en un capítulo «Mediciones Revit».</p>`,
+      <p>También reconoce cabeceras de tablas de Revit como Nota clave, Recuento, Área, Longitud, Volumen o Id. Si la partida no está en el presupuesto pero sí en la base, se crea en su capítulo de la base (E04, E05…) o, si no lo tiene, en un capítulo «Mediciones importadas».</p>`,
       [{ label: "Cancelar" }, { label: "Elegir archivo", primary: true, run: () => { $("#fMeas").value = ""; $("#fMeas").click(); } }]);
   },
   saveJson(){ saveFile(safeName(P.name) + ".json", JSON.stringify(P, null, 1)); },
@@ -2865,7 +2878,8 @@ $("#fMeas").addEventListener("change", async e => {
     if (!rows.length) throw new Error("vacío");
     const unitOf = code => { const f = P.chapters.flatMap(c => c.items).find(i => i.code === code); return (f && f.unit) || (BASE && BASE.map[code] && BASE.map[code].unit) || ""; };
     let nAcero = 0;
-    rows.forEach(r => { if (/^kg$/i.test(unitOf(r.code)) && isBlank(r.line.h) && aceroAplicar(r.line)){ nAcero++; const lc = r.line.c && ACERO.lookup(r.line.c); if (!r.line.c || (lc && lc.name === r.line.pf)) r.line.c = r.line.pf + " · " + String(r.line.h).replace(".", ",") + " kg/m"; } });
+    const modoDe = code => { const f = P.chapters.flatMap(c => c.items).find(i => i.code === code); if (f) return aceroModo(f); const b = BASE && BASE.map[code]; return b ? aceroModo({ unit: b.unit, summary: b.summary, text: b.text }) : null; };
+    rows.forEach(r => { if (/^kg$/i.test(unitOf(r.code)) && modoDe(r.code) && isBlank(r.line.h) && aceroAplicar(r.line)){ nAcero++; const lc = r.line.c && ACERO.lookup(r.line.c); if (!r.line.c || (lc && lc.name === r.line.pf)) r.line.c = r.line.pf + " · " + String(r.line.h).replace(".", ",") + " kg/m"; } });
     if (nAcero) setTimeout(() => toast(`${nAcero} líneas de acero con el peso del prontuario`), 1500);
     const byCode = {}; rows.forEach(r => (byCode[r.code] = byCode[r.code] || []).push(r.line));
     ensureIds(P);
@@ -2882,7 +2896,7 @@ $("#fMeas").addEventListener("change", async e => {
         if (nxt < 0) P.chapters.push(ch); else P.chapters.splice(nxt, 0, ch);
         return ch;
       }
-      return P.chapters.find(c => c.summary === "Mediciones Revit") || addChapter("Mediciones Revit");
+      return P.chapters.find(c => c.summary === "Mediciones importadas" || c.summary === "Mediciones Revit") || addChapter("Mediciones importadas");
     };
     for (const code in byCode){
       let it = null;
@@ -2970,6 +2984,7 @@ $("#fRooms").addEventListener("change", async e => {
   fsInit();
   try { if (localStorage.getItem("srgex:baseOff")) document.body.classList.add("base-off"); } catch(e){}
   document.addEventListener("keydown", e => { if (e.altKey && (e.key === "b" || e.key === "B")){ e.preventDefault(); actions.baseToggle(); } });
+  $("#aceroListBar").innerHTML = ACERO.names.filter(n => /^B500S/.test(n)).map(n => `<option value="${esc(n.replace("B500S ", ""))}">${esc(String(ACERO.T[n]).replace(".", ","))} kg/m</option>`).join("");
   $("#aceroList").innerHTML = ACERO.names.map(n => `<option value="${esc(n)}">${esc(String(ACERO.T[n]).replace(".", ","))} ${/^B500|^Ø|^#|^[A-Z]/.test(n) ? "kg/m" : ""}</option>`).join("");
 })();
 </script>
