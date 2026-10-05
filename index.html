@@ -146,6 +146,11 @@ table.meas td.parc{text-align:right; padding-right:8px; white-space:nowrap}
 .res .rm{grid-column:1/-1; font-size:12px; color:var(--muted); display:flex; justify-content:space-between; gap:8px; align-items:center}
 .res .rt{grid-column:1/-1; font-size:12.5px; color:var(--muted); white-space:pre-wrap; display:none; margin-top:4px}
 .res.open .rt{display:block}
+.crumbs{display:flex; flex-wrap:wrap; gap:2px 4px; line-height:1.5} .crumbs a{color:var(--accent); text-decoration:none} .crumbs a:hover{text-decoration:underline} .crumbs b{color:var(--ink)}
+.bt-chap{display:grid; grid-template-columns:22px auto 1fr auto; gap:8px; align-items:baseline; padding:9px 14px; border-bottom:1px solid var(--line); cursor:pointer}
+.bt-chap:hover{background:var(--surface-2)} .bt-code{font-weight:600; font-size:12.5px} .bt-sum{font-weight:500} .bt-n{font-size:11.5px; color:var(--muted)}
+.bt-up{padding:8px 14px; border-bottom:1px solid var(--line); cursor:pointer; color:var(--accent); font-size:13px} .bt-up:hover{background:var(--surface-2)}
+.rpath{color:var(--muted); text-decoration:none; font-size:12px} .rpath:hover{color:var(--accent); text-decoration:underline}
 .base-meta{padding:8px 14px; font-size:12px; color:var(--muted); border-bottom:1px solid var(--line)}
 
 /* Modal y avisos */
@@ -187,7 +192,15 @@ table.rt input[type=checkbox]{width:17px; height:17px; accent-color:var(--ink)}
 .fs-row{display:flex; justify-content:space-between; gap:10px; align-items:center; padding:8px 10px; border-bottom:1px solid var(--line); flex-wrap:wrap}
 .fs-row.cur{background:var(--sel)}
 .fs-name{font-weight:500; overflow-wrap:anywhere}
+.fs-cfg{display:flex; gap:8px; align-items:flex-end} .fs-cfg label{flex:1; display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--muted)} .fs-cfg input{border:1px solid var(--line); border-radius:6px; padding:6px 8px; background:var(--surface); color:var(--ink)}
 .fs-acts{display:flex; gap:6px; flex-wrap:wrap}
+.st-h{margin:14px 0 6px; font-size:13.5px}
+.st-groups{display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; font-size:13px}
+.st-row{display:flex; gap:8px; align-items:center; justify-content:space-between; margin-top:8px; flex-wrap:wrap}
+.st-row input{flex:1; min-width:180px; border:1px solid var(--line); border-radius:6px; padding:6px 8px; background:var(--surface); color:var(--ink)}
+.st-row select{border:1px solid var(--line); border-radius:6px; padding:4px 6px; background:var(--surface); color:var(--ink); margin-left:6px}
+.st-list{border:1px solid var(--line); border-radius:8px; max-height:28vh; overflow:auto}
+.st-tpl{display:flex; justify-content:space-between; gap:8px; align-items:center; padding:7px 10px; border-bottom:1px solid var(--line); flex-wrap:wrap}
 .modal .acts{display:flex; gap:8px; justify-content:flex-end; margin-top:16px; flex-wrap:wrap}
 #toast{position:fixed; left:50%; bottom:calc(18px + env(safe-area-inset-bottom,0px)); transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:9px 14px; border-radius:8px; font-size:13px; opacity:0; pointer-events:none; transition:opacity .2s; z-index:30; max-width:90vw}
 #toast.on{opacity:1}
@@ -310,6 +323,7 @@ table.ct tr.tot td{font-weight:600; border-top:1px solid var(--ink)}
       <button class="presu-only btn small" data-act="addChap">+ Capítulo</button>
       <button class="presu-only btn small" data-act="addSub" title="Subcapítulo dentro del capítulo seleccionado">+ Subcap.</button>
       <button class="presu-only btn small" data-act="addItem">+ Partida</button>
+      <button class="presu-only btn small" data-act="estructura" title="Cargar la estructura de capítulos de la Junta o de una plantilla">Estructura…</button>
       <button class="presu-only btn small ghost" data-act="up" title="Subir" aria-label="Subir">↑</button>
       <button class="presu-only btn small ghost" data-act="down" title="Bajar" aria-label="Bajar">↓</button>
       <button class="presu-only btn small ghost danger" data-act="del" title="Eliminar la partida o el capítulo seleccionado" aria-label="Eliminar selección">🗑</button>
@@ -1069,7 +1083,27 @@ function refreshDetailTotals(it){
 let baseQuery = "", baseFilter = "partidas", openRes = null;
 const fold = s => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 let baseIndex = null;
-function buildIndex(){ baseIndex = BASE ? BASE.list.map(k => [k, fold(k + " " + BASE.map[k].summary)]) : null; }
+let baseCwd = null, baseRoot = null, baseParent = {};
+function buildIndex(){
+  baseIndex = BASE ? BASE.list.map(k => [k, fold(k + " " + BASE.map[k].summary)]) : null;
+  baseParent = {}; baseRoot = null; baseCwd = null;
+  if (!BASE) return;
+  for (const k in BASE.map){
+    const c = BASE.map[k];
+    if (c.isRoot && !baseRoot) baseRoot = k;
+    if (c.isChapter || c.isRoot) for (const d of c.decomp || []) if (!baseParent[d.code]) baseParent[d.code] = k;
+  }
+  baseCwd = baseRoot;
+}
+function basePath(code){
+  const out = []; let k = code, guard = 0;
+  while (k && guard++ < 12){ out.unshift(k); k = baseParent[k]; }
+  return out;
+}
+const resRow = c => `<div class="res ${openRes === c.code ? "open" : ""}" data-act="resToggle" data-code="${esc(c.code)}">
+      <span class="rc">${esc(c.code)}</span><span class="rp">${m2(c.price)} €/${esc(c.unit || "ud")}</span>
+      <span class="rs">${esc(c.summary)}</span>
+      ${c.text ? `<span class="rt">${esc(c.text)}</span>` : ""}`;
 function renderBase(){
   if (isCert()) return renderCertPanel();
   const box = $("#baseBody");
@@ -1080,7 +1114,7 @@ function renderBase(){
   }
   const had = box.querySelector("#bq");
   if (!had){
-    box.innerHTML = `<div class="base-tools"><input id="bq" type="search" placeholder="Buscar por código o texto" aria-label="Buscar en la base" autocomplete="off">
+    box.innerHTML = `<div class="base-tools"><input id="bq" type="search" placeholder="Buscar código o texto" aria-label="Buscar en la base" autocomplete="off">
       <select id="bf" aria-label="Filtro"><option value="partidas">Partidas</option><option value="todo">Todo</option></select></div>
       <div class="base-meta" id="bmeta"></div><div id="bres"></div>`;
     $("#bq").value = baseQuery; $("#bf").value = baseFilter;
@@ -1091,6 +1125,7 @@ function renderBase(){
 }
 function renderResults(){
   const words = fold(baseQuery).split(/\s+/).filter(Boolean);
+  if (!words.length && baseRoot) return renderBaseTree();
   const out = [];
   let total = 0;
   for (const [k, hay] of baseIndex){
@@ -1101,14 +1136,30 @@ function renderResults(){
     if (out.length < 150) out.push(c);
   }
   $("#bmeta").textContent = `${BASE.name} · ${BASE.count.toLocaleString("es-ES")} conceptos` + (words.length ? ` · ${total.toLocaleString("es-ES")} resultados` : "") + (total > 150 ? " (se muestran 150)" : "");
-  $("#bres").innerHTML = out.length ? out.map(c => `<div class="res ${openRes === c.code ? "open" : ""}" data-act="resToggle" data-code="${esc(c.code)}">
-      <span class="rc">${esc(c.code)}</span><span class="rp">${m2(c.price)} €/${esc(c.unit || "ud")}</span>
-      <span class="rs">${esc(c.summary)}</span>
-      ${c.text ? `<span class="rt">${esc(c.text)}</span>` : ""}
-      <span class="rm"><span>${esc(c.parent)}</span><button class="btn small" data-act="addFromBase" data-code="${esc(c.code)}">Añadir</button></span></div>`).join("")
+  $("#bres").innerHTML = out.length ? out.map(c => {
+      const par = baseParent[c.code], pc = par && BASE.map[par];
+      return resRow(c) + `<span class="rm">${pc ? `<a href="#" class="rpath" data-act="baseGo" data-code="${esc(par)}" title="Ver dónde está en la base">📁 ${esc(par)} · ${esc(pc.summary)}</a>` : `<span></span>`}<button class="btn small" data-act="addFromBase" data-code="${esc(c.code)}">Añadir</button></span></div>`;
+    }).join("")
     : `<div class="empty"><p>Sin resultados. Prueba con otra palabra o cambia el filtro a «Todo».</p></div>`;
 }
-
+/* Navegación por capítulos de la base, como en la propia base de la Junta */
+function renderBaseTree(){
+  const cwd = BASE.map[baseCwd] ? baseCwd : baseRoot, cur = BASE.map[cwd];
+  const path = basePath(cwd);
+  $("#bmeta").innerHTML = `<div class="crumbs">${path.map((k, i) => {
+      const c = BASE.map[k], label = i === 0 ? "Base" : `${k} ${c.summary}`;
+      return i === path.length - 1 ? `<b title="${esc(c.summary)}">${esc(label)}</b>` : `<a href="#" data-act="baseGo" data-code="${esc(k)}" title="${esc(c.summary)}">${esc(label)}</a>`;
+    }).join(" › ")}</div>`;
+  const kids = (cur.decomp || []).map(d => BASE.map[d.code]).filter(Boolean);
+  const chaps = kids.filter(c => c.isChapter || c.isRoot);
+  const leaves = kids.filter(c => !(c.isChapter || c.isRoot) && (baseFilter !== "partidas" || c.isPartida));
+  const count = c => (c.decomp || []).length;
+  $("#bres").innerHTML = (path.length > 1 ? `<div class="bt-up" data-act="baseGo" data-code="${esc(path[path.length - 2])}">↰ Subir a ${esc(path.length > 2 ? path[path.length - 2] : "la base")}</div>` : "")
+    + chaps.map(c => `<div class="bt-chap" data-act="baseGo" data-code="${esc(c.code)}"><span class="bt-ico">📁</span><span class="bt-code">${esc(c.code)}</span><span class="bt-sum">${esc(c.summary)}</span><span class="bt-n">${count(c)}</span></div>`).join("")
+    + leaves.slice(0, 400).map(c => resRow(c) + `<span class="rm"><span></span><button class="btn small" data-act="addFromBase" data-code="${esc(c.code)}">Añadir</button></span></div>`).join("")
+    + (!chaps.length && !leaves.length ? `<div class="empty"><p>Este capítulo no tiene ${baseFilter === "partidas" ? "partidas (cambia el filtro a «Todo» para ver materiales y mano de obra)" : "conceptos"}.</p></div>` : "")
+    + (leaves.length > 400 ? `<div class="empty"><p>Se muestran 400 de ${leaves.length}. Usa el buscador para afinar.</p></div>` : "");
+}
 function renderAll(){
   document.body.dataset.mode = isCert() ? "cert" : "presu";
   document.querySelectorAll(".modes button").forEach(b => b.classList.toggle("on", b.dataset.m === (isCert() ? "cert" : "presu")));
@@ -1239,10 +1290,13 @@ const actions = {
     const it = f.item; it.price = decompRows(it.decomp, P.concepts).total; it.priceEdited = false;
     renderDetail(); refreshTreeAmounts(); markDirty(); toast("Precio recalculado desde la descomposición");
   },
-  resToggle(el, e){ if (e.target.closest('[data-act="addFromBase"]')) return; openRes = openRes === el.dataset.code ? null : el.dataset.code; renderResults(); },
+  resToggle(el, e){ if (e.target.closest('[data-act="addFromBase"]') || e.target.closest('[data-act="baseGo"]')) return; openRes = openRes === el.dataset.code ? null : el.dataset.code; renderResults(); },
+  baseGo(el){ baseCwd = el.dataset.code; baseQuery = ""; const q = $("#bq"); if (q) q.value = ""; openRes = null; renderResults(); const r = $("#baseBody"); if (r) r.scrollTop = 0; },
   addFromBase(el){
     const c = BASE.map[el.dataset.code]; if (!c) return;
-    const ch = targetChap();
+    let auto = null;
+    for (const x of P.chapters) if (x.code && c.code.startsWith(x.code) && (!auto || x.code.length > auto.code.length)) auto = x;
+    const ch = auto || targetChap();
     const it = itemFromConcept(c, BASE.map, P.concepts);
     if (!P.baseName) P.baseName = BASE.name;
     const f = sel.item ? findItem(sel.item) : null;
@@ -1532,9 +1586,10 @@ function buildPdf(P){
 }
 
 /* ===== Carpeta de proyectos (OneDrive) — File System Access API, Chrome/Edge de escritorio ===== */
-const FS = { root: null, ok: false, mt: {}, savedAt: null, err: false };
+const FS = { root: null, ok: false, mt: {}, savedAt: null, err: false, subName: "" };
+const EXP_RE = /^\d{4}_\d{2,4}_/;   // formato de expediente AAAA_NNN_TIPO_Cliente
 const fsSupported = () => "showDirectoryPicker" in window && window.self === window.top;
-const fsKey = () => P.file ? P.file.dir + "/" + P.file.name : "";
+const fsKey = () => P.file ? [P.file.dir, P.file.sub || "", P.file.name].join("/") : "";
 function fsStatus(){
   const el = $("#saveState"); if (!el) return;
   const btn = $("#fsBtn");
@@ -1544,13 +1599,14 @@ function fsStatus(){
   if (!FS.ok){ el.innerHTML = `<a href="#" data-act="fsReconnect" class="warnlink">⚠ Carpeta sin conectar: pulsa para permitir el acceso</a>`; return; }
   if (!P.file){ el.innerHTML = `Sin expediente · <a href="#" data-act="misPresupuestos">guardar en un expediente</a>`; return; }
   const t = FS.savedAt ? FS.savedAt.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "";
-  el.innerHTML = FS.err ? `<span class="warnlink">⚠ No se pudo guardar en ${esc(P.file.dir)}</span>` : `📁 ${esc(P.file.dir)} · ${esc(P.file.name)}${t ? " · guardado " + t : ""}`;
+  el.innerHTML = FS.err ? `<span class="warnlink">⚠ No se pudo guardar en ${esc(P.file.dir)}</span>` : `📁 ${esc(P.file.dir)}${P.file.sub ? " / " + esc(P.file.sub) : ""} · ${esc(P.file.name)}${t ? " · guardado " + t : ""}`;
 }
 async function fsInit(){
   if (!fsSupported()) return fsStatus();
   try {
     const h = await store.get("dirHandle");
     if (h){ FS.root = h; FS.ok = (await h.queryPermission({ mode: "readwrite" })) === "granted"; }
+    FS.subName = (await store.get("fsSub")) || "";
   } catch(e){ FS.ok = false; }
   fsStatus();
   if (FS.ok && P.file) fsCheckNewer();
@@ -1567,8 +1623,23 @@ async function fsReconnect(){
   fsStatus();
   if (FS.ok){ toast("Carpeta conectada"); if (P.file) fsCheckNewer(true); }
 }
-async function fsFileHandle(dir, name, create){
-  const dh = await FS.root.getDirectoryHandle(dir);
+async function fsWalk(dh, path, create){
+  for (const part of String(path || "").split(/[\\/]+/).filter(Boolean)) dh = await dh.getDirectoryHandle(part, { create: !!create });
+  return dh;
+}
+/* Subcarpeta del expediente donde van los presupuestos: la configurada, o una que contenga «presupuesto» o «medicion» */
+async function fsSubFor(dh, create){
+  if (FS.subName) return { h: await fsWalk(dh, FS.subName, create), name: FS.subName };
+  let alt = null;
+  for await (const [n, h] of dh.entries()){
+    if (h.kind !== "directory") continue;
+    if (/presupuest/i.test(n)) return { h, name: n };
+    if (!alt && /medici/i.test(n)) alt = { h, name: n };
+  }
+  return alt || { h: dh, name: "" };
+}
+async function fsFileHandle(dir, name, create, sub){
+  const dh = await fsWalk(await FS.root.getDirectoryHandle(dir), sub === undefined ? (P.file && P.file.sub) : sub, create);
   return dh.getFileHandle(name, { create: !!create });
 }
 let fsTimer = null;
@@ -1577,7 +1648,7 @@ async function fsWrite(force){
   if (!P.file || !FS.root) return;
   if (!FS.ok){ fsStatus(); return; }
   try {
-    const fh = await fsFileHandle(P.file.dir, P.file.name, true), key = fsKey();
+    const fh = await fsFileHandle(P.file.dir, P.file.name, true, P.file.sub), key = fsKey();
     const cur = await fh.getFile();
     if (!force && FS.mt[key] && cur.lastModified > FS.mt[key] + 1500) return fsConflict(cur);
     const w = await fh.createWritable(); await w.write(JSON.stringify(P, null, 1)); await w.close();
@@ -1588,7 +1659,7 @@ async function fsWrite(force){
 /* Al abrir o reconectar: si el archivo de la carpeta es más reciente (se editó en el otro equipo), se ofrece cargarlo */
 async function fsCheckNewer(){
   try {
-    const fh = await fsFileHandle(P.file.dir, P.file.name, false), f = await fh.getFile(), key = fsKey();
+    const fh = await fsFileHandle(P.file.dir, P.file.name, false, P.file.sub), f = await fh.getFile(), key = fsKey();
     if (!FS.mt[key] && f.lastModified > (P.localAt || 0) + 2000){ FS.mt[key] = f.lastModified; return fsConflict(f, true); }
     FS.mt[key] = FS.mt[key] || f.lastModified;
   } catch(e){ /* aún no existe: se creará al guardar */ }
@@ -1596,15 +1667,15 @@ async function fsCheckNewer(){
 function fsConflict(f, newer){
   const when = new Date(f.lastModified).toLocaleString("es-ES");
   modal("El presupuesto ha cambiado en la carpeta", `<p>${newer ? "La versión de la carpeta del expediente es más reciente que la de este navegador" : "Mientras trabajabas, el archivo se ha modificado desde otro sitio (probablemente desde el otro ordenador)"}: <b>${esc(P.file.dir)} / ${esc(P.file.name)}</b>, modificado el ${when}.</p><p>¿Con cuál te quedas?</p>`,
-    [{ label: "Cargar la de la carpeta", primary: true, run: async () => { await fsOpen(P.file.dir, P.file.name); } },
+    [{ label: "Cargar la de la carpeta", primary: true, run: async () => { await fsOpen(P.file.dir, P.file.name, P.file.sub); } },
      { label: "Quedarme con la de aquí (sobrescribir)", danger: true, run: () => fsWrite(true) }]);
 }
-async function fsOpen(dir, name){
+async function fsOpen(dir, name, sub){
   try {
-    const fh = await fsFileHandle(dir, name, false), f = await fh.getFile();
+    const fh = await fsFileHandle(dir, name, false, sub || ""), f = await fh.getFile();
     const np = JSON.parse(await f.text());
     if (!np || !Array.isArray(np.chapters)) throw new Error("formato");
-    P = Object.assign(newProject(), np); P.file = { dir, name }; ensureIds(P);
+    P = Object.assign(newProject(), np); P.file = { dir, sub: sub || "", name }; ensureIds(P);
     FS.mt[fsKey()] = f.lastModified; FS.savedAt = new Date(f.lastModified); FS.err = false;
     sel = { chap: P.chapters[0] ? P.chapters[0].id : null, item: null };
     $("#baseBody").innerHTML = ""; renderAll(); renderBase();
@@ -1616,11 +1687,19 @@ async function fsList(){
   const out = [];
   for await (const [name, h] of FS.root.entries()){
     if (h.kind !== "directory" || /^[._]/.test(name)) continue;
-    const files = [];
-    try { for await (const [fn, fh] of h.entries()) if (fh.kind === "file" && /\.srgex\.json$/i.test(fn)) files.push(fn); } catch(e){}
-    out.push({ name, files: files.sort() });
+    const files = [], exp = EXP_RE.test(name);
+    const scan = async (dh, sub) => { for await (const [fn, fh] of dh.entries()) if (fh.kind === "file" && /\.srgex\.json$/i.test(fn)) files.push({ name: fn, sub }); };
+    try {
+      await scan(h, "");
+      if (exp){
+        // busca en todas las subcarpetas de primer nivel (y en la configurada, aunque esté más profunda)
+        for await (const [sn, sh] of h.entries()) if (sh.kind === "directory") await scan(sh, sn).catch(() => {});
+        if (FS.subName && /[\\/]/.test(FS.subName)){ const d = await fsWalk(h, FS.subName, false).catch(() => null); if (d) await scan(d, FS.subName); }
+      }
+    } catch(e){}
+    out.push({ name, exp, files });
   }
-  return out.sort((a, b) => b.name.localeCompare(a.name, "es"));
+  return out.sort((a, b) => (b.exp - a.exp) || b.name.localeCompare(a.name, "es"));
 }
 actions.fsPick = () => fsPick();
 actions.fsReconnect = () => fsReconnect();
@@ -1630,49 +1709,138 @@ actions.misPresupuestos = async function(){
   if (!FS.ok){ await fsReconnect(); if (!FS.ok) return; }
   let list = [];
   try { list = await fsList(); } catch(e){ return toast("No se ha podido leer la carpeta de proyectos"); }
-  const nfiles = list.reduce((s, x) => s + x.files.length, 0);
-  modal("Mis presupuestos", `<p class="hint">Carpeta: <b>${esc(FS.root.name)}</b> · ${list.length} expedientes · ${nfiles} presupuestos. <a href="#" id="fsChange">Cambiar carpeta</a></p>
-    <input id="fsQ" type="search" placeholder="Buscar expediente, cliente o año" style="width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--surface);margin-bottom:8px">
-    <div id="fsListBox" class="fs-list"></div>`, [{ label: "Cerrar" }]);
-  const box = $("#fsListBox"), q = $("#fsQ");
+  const nfiles = list.reduce((s, x) => s + x.files.length, 0), nexp = list.filter(x => x.exp).length;
+  modal("Mis presupuestos", `<p class="hint">Carpeta: <b>${esc(FS.root.name)}</b> · ${nexp} expedientes · ${nfiles} presupuestos. <a href="#" id="fsChange">Cambiar carpeta</a></p>
+    <div class="fs-cfg"><label>Dentro de cada expediente, guardar en la subcarpeta
+      <input id="fsSub" value="${esc(FS.subName)}" placeholder="automático: la que contenga «presupuesto» (o «medición»); si no hay, en la raíz"></label>
+      <button class="btn small" id="fsSubSave">Guardar</button></div>
+    <input id="fsQ" type="search" placeholder="Buscar expediente, cliente o año" style="width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--surface);margin:8px 0">
+    <div id="fsListBox" class="fs-list"></div>
+    <label class="hint" style="display:block;margin-top:6px"><input type="checkbox" id="fsOther"> Mostrar también las carpetas que no son expedientes (REFERENCIAS, PLANTILLAS…)</label>`, [{ label: "Cerrar" }]);
+  const box = $("#fsListBox"), q = $("#fsQ"), other = $("#fsOther");
+  const isCur = (x, f) => P.file && P.file.dir === x.name && P.file.name === f.name && (P.file.sub || "") === (f.sub || "");
   const draw = () => {
     const w = fold(q.value).split(/\s+/).filter(Boolean);
-    const rows = list.filter(x => w.every(t => fold(x.name).includes(t))).slice(0, 200);
+    const rows = list.filter(x => (x.exp || other.checked) && w.every(t => fold(x.name).includes(t))).slice(0, 250);
     box.innerHTML = rows.map(x => `<div class="fs-row ${P.file && P.file.dir === x.name ? "cur" : ""}"><div class="fs-name">📁 ${esc(x.name)}</div><div class="fs-acts">
-      ${x.files.map(f => `<button class="btn small ${P.file && P.file.dir === x.name && P.file.name === f ? "primary" : ""}" data-fsopen="${esc(x.name)}" data-fsfile="${esc(f)}">Abrir ${esc(f.replace(/\.srgex\.json$/i, ""))}</button>`).join("")}
+      ${x.files.map(f => `<button class="btn small ${isCur(x, f) ? "primary" : ""}" data-fsopen="${esc(x.name)}" data-fsfile="${esc(f.name)}" data-fssub="${esc(f.sub)}" title="${esc((f.sub ? f.sub + " / " : "") + f.name)}">Abrir ${esc(f.name.replace(/\.srgex\.json$/i, ""))}${f.sub ? ` <span class="hint">(${esc(f.sub)})</span>` : ""}</button>`).join("")}
       <button class="btn small ghost" data-fsnew="${esc(x.name)}">+ Nuevo aquí</button>
       <button class="btn small ghost" data-fssave="${esc(x.name)}">Guardar el actual aquí</button></div></div>`).join("") || `<div class="empty"><p>Ningún expediente coincide.</p></div>`;
   };
-  draw(); q.addEventListener("input", draw); setTimeout(() => q.focus(), 0);
+  draw(); q.addEventListener("input", draw); other.addEventListener("change", draw); setTimeout(() => q.focus(), 0);
   $("#fsChange").onclick = ev => { ev.preventDefault(); $("#modalRoot").innerHTML = ""; fsPick(); };
+  $("#fsSubSave").onclick = async () => { FS.subName = $("#fsSub").value.trim().replace(/^[\\/]+|[\\/]+$/g, ""); await store.set("fsSub", FS.subName); toast(FS.subName ? `Los presupuestos nuevos irán a «${FS.subName}» dentro de cada expediente` : "Subcarpeta en automático"); $("#modalRoot").innerHTML = ""; actions.misPresupuestos(); };
   box.onclick = async ev => {
     const b = ev.target.closest("button"); if (!b) return;
-    if (b.dataset.fsopen){ $("#modalRoot").innerHTML = ""; await fsWrite(); return fsOpen(b.dataset.fsopen, b.dataset.fsfile); }
-    const dir = b.dataset.fsnew || b.dataset.fssave;
-    const isNew = !!b.dataset.fsnew;
+    if (b.dataset.fsopen){ $("#modalRoot").innerHTML = ""; await fsWrite(); return fsOpen(b.dataset.fsopen, b.dataset.fsfile, b.dataset.fssub); }
+    const dir = b.dataset.fsnew || b.dataset.fssave, isNew = !!b.dataset.fsnew;
+    let target;
+    try { target = await fsSubFor(await FS.root.getDirectoryHandle(dir), true); } catch(e){ return toast("No se ha podido acceder a esa carpeta"); }
+    const existing = []; for await (const [fn] of target.h.entries()) existing.push(fn);
     const base = isNew ? "presupuesto" : safeName(P.name);
-    const existing = (list.find(x => x.name === dir) || { files: [] }).files;
     let name = base + ".srgex.json", k = 2; while (existing.includes(name)) name = `${base}_${k++}.srgex.json`;
     $("#modalRoot").innerHTML = "";
     if (isNew){
       await fsWrite();
-      P = newProject(); P.name = dir.replace(/^\d{4}_\d+_[A-Z]+_?/, "").replace(/_/g, " ") || "Presupuesto";
+      P = newProject(); P.name = dir.replace(/^\d{4}_\d+_[A-Za-z]+_?/, "").replace(/_/g, " ") || "Presupuesto";
       sel = { chap: null, item: null }; $("#baseBody").innerHTML = ""; renderAll(); renderBase();
     }
-    P.file = { dir, name }; FS.mt[fsKey()] = 0;
+    P.file = { dir, sub: target.name, name }; FS.mt[fsKey()] = 0;
     await fsWrite(true); markDirty();
-    toast(`${isNew ? "Presupuesto nuevo creado" : "Guardado"} en ${dir}`);
+    toast(`${isNew ? "Presupuesto nuevo creado" : "Guardado"} en ${dir}${target.name ? " / " + target.name : ""}`);
   };
 };
 /* Exportaciones: si el presupuesto está en un expediente, los archivos van a esa carpeta */
 async function fsSaveExport(filename, data){
   if (!(P.file && FS.root && FS.ok)) return false;
   try {
-    const fh = await fsFileHandle(P.file.dir, filename, true), w = await fh.createWritable();
+    const fh = await fsFileHandle(P.file.dir, filename, true, P.file.sub), w = await fh.createWritable();
     await w.write(data instanceof Blob ? data : new Blob([data])); await w.close();
-    toast(`Guardado en ${P.file.dir} / ${filename}`); return true;
+    toast(`Guardado en ${P.file.dir}${P.file.sub ? " / " + P.file.sub : ""} / ${filename}`); return true;
   } catch(e){ return false; }
 }
+
+/* ===== Estructura de capítulos: desde la base de la Junta o desde plantillas ===== */
+const TPL_BUILTIN = [{ id: "srgex-vivienda", builtin: true, name: "Vivienda (estructura de tu presupuesto visado)", chapters: [
+  ["E01", "ACTUACIONES PREVIAS"], ["E02", "MOVIMIENTO DE TIERRAS"], ["E03", "RED DE SANEAMIENTO ENTERRADA"], ["E04", "CIMENTACIONES"], ["E05", "ESTRUCTURAS"],
+  ["E06", "ALBAÑILERÍA"], ["E07", "CUBIERTAS"], ["E08", "REVESTIMIENTOS Y FALSOS TECHOS"], ["E09", "AISLAMIENTOS E IMPERMEABILIZACIONES"], ["E10", "PAVIMENTOS"],
+  ["E11", "ALICATADOS, CHAPADOS Y PREFABRICADOS"], ["E12", "INSTALACIONES"], ["E12_E", "ELECTRICIDAD", "E12"], ["E12_F", "FONTANERÍA", "E12"],
+  ["E13", "CARPINTERÍA, CERRAJERÍA Y PROTECCIONES"], ["E14", "VIDRIOS"], ["E15", "PINTURAS Y ACABADOS"], ["E16", "MOBILIARIO, EQUIPAMIENTO Y SEÑALIZACIÓN"],
+  ["E17", "MEDIDAS CORRECTORAS FRENTE AL GAS RADÓN"], ["E_RES", "CONTROL DE CALIDAD"], ["E18", "GESTIÓN DE RESIDUOS"], ["E19", "SEGURIDAD Y SALUD"]
+].map(([code, summary, parent]) => ({ code, summary, parent: parent || null })) }];
+async function tplAll(){ return TPL_BUILTIN.concat((await store.get("chapTemplates")) || []); }
+/* Inserta los capítulos que falten (por código), respetando lo que ya hay */
+function applyStructure(list){
+  let added = 0;
+  const byCode = c => P.chapters.find(x => x.code === c);
+  for (const t of list){
+    if (byCode(t.code)) continue;
+    const par = t.parent ? byCode(t.parent) : null;
+    const ch = { id: uid("c"), code: t.code, summary: t.summary, items: [], collapsed: false, parentId: par ? par.id : null };
+    const sibs = P.chapters.filter(x => (x.parentId || null) === ch.parentId);
+    const after = sibs.filter(x => x.code.localeCompare(ch.code, "es", { numeric: true }) < 0).pop();
+    if (P.chapters.length && after) P.chapters.splice(P.chapters.indexOf(after) + 1, 0, ch);
+    else if (P.chapters.length && sibs.length) P.chapters.splice(P.chapters.indexOf(sibs[0]), 0, ch);
+    else P.chapters.push(ch);
+    added++;
+  }
+  renderAll(); markDirty();
+  return added;
+}
+function emptyChapters(){
+  const has = ch => ch.items.length || P.chapters.some(c => c.parentId === ch.id && has(c));
+  return P.chapters.filter(c => !has(c));
+}
+/* Estructura de la base cargada: grupos raíz (E, U, S…) y profundidad */
+function baseStructure(groups, depth){
+  const out = [];
+  const walk = (code, parent, level) => {
+    for (const d of BASE.map[code].decomp || []){
+      const c = BASE.map[d.code];
+      if (!c || !c.isChapter) continue;
+      out.push({ code: c.code, summary: c.summary, parent });
+      if (level < depth) walk(c.code, c.code, level + 1);
+    }
+  };
+  for (const g of groups) walk(g, null, 1);
+  return out;
+}
+actions.estructura = async function(){
+  const tpls = await tplAll();
+  const groups = BASE && baseRoot ? (BASE.map[baseRoot].decomp || []).map(d => BASE.map[d.code]).filter(c => c && c.isChapter && /^[A-Z]$/.test(c.code) && !/^[OMPA]$/.test(c.code)) : [];
+  const nEmpty = emptyChapters().length;
+  modal("Estructura de capítulos", `
+    <h4 class="st-h">Desde la base de precios ${BASE ? `<span class="hint">(${esc(BASE.name)})</span>` : ""}</h4>
+    ${BASE && groups.length ? `<div class="st-groups">${groups.map(g => `<label><input type="checkbox" data-grp="${esc(g.code)}" ${g.code === "E" ? "checked" : ""}> ${esc(g.code)} · ${esc(g.summary)}</label>`).join("")}</div>
+      <div class="st-row"><label>Nivel <select id="stDepth"><option value="1">Solo capítulos (E01, E02…)</option><option value="2">Capítulos y subcapítulos (E01A, E01E…)</option></select></label>
+      <button class="btn small primary" id="stBase">Cargar estructura</button></div>`
+      : `<p class="hint">Carga primero la base de precios para poder copiar su estructura.</p>`}
+    <h4 class="st-h">Plantillas</h4>
+    <div class="st-list">${tpls.map(t => `<div class="st-tpl"><span><b>${esc(t.name)}</b> <span class="hint">${t.chapters.length} capítulos${t.builtin ? " · precargada" : ""}</span></span>
+      <span><button class="btn small" data-tpl-apply="${esc(t.id)}">Aplicar</button>${t.builtin ? "" : ` <button class="btn small ghost danger" data-tpl-del="${esc(t.id)}">Borrar</button>`}</span></div>`).join("")}</div>
+    <div class="st-row"><input id="stName" placeholder="Nombre de la plantilla, p. ej. «Reforma de vivienda»"><button class="btn small" id="stSave" ${P.chapters.length ? "" : "disabled"}>Guardar la estructura actual</button></div>
+    <h4 class="st-h">Limpieza</h4>
+    <div class="st-row"><span class="hint">${nEmpty} capítulos sin partidas en este presupuesto.</span><button class="btn small" id="stClean" ${nEmpty ? "" : "disabled"}>Quitar capítulos vacíos</button></div>
+    <p class="hint">Aplicar una estructura solo añade los capítulos que falten; no toca los que ya tienes ni sus partidas. Al añadir partidas desde la base, cada una va sola al capítulo cuyo código coincide (E06DBL060 → E06).</p>`,
+    [{ label: "Cerrar" }]);
+  const close = () => { $("#modalRoot").innerHTML = ""; };
+  const stBase = $("#stBase");
+  if (stBase) stBase.onclick = () => {
+    const gs = [...document.querySelectorAll("[data-grp]")].filter(c => c.checked).map(c => c.dataset.grp);
+    if (!gs.length) return toast("Marca al menos un grupo");
+    const n = applyStructure(baseStructure(gs, +$("#stDepth").value)); close(); toast(`${n} capítulos añadidos desde la base`);
+  };
+  document.querySelectorAll("[data-tpl-apply]").forEach(b => b.onclick = () => { const t = tpls.find(x => x.id === b.dataset.tplApply); const n = applyStructure(t.chapters); close(); toast(`${n} capítulos añadidos de «${t.name}»`); });
+  document.querySelectorAll("[data-tpl-del]").forEach(b => b.onclick = async () => { const own = ((await store.get("chapTemplates")) || []).filter(x => x.id !== b.dataset.tplDel); await store.set("chapTemplates", own); close(); actions.estructura(); });
+  $("#stSave").onclick = async () => {
+    const name = $("#stName").value.trim() || P.name || "Mi estructura";
+    const byId = Object.fromEntries(P.chapters.map(c => [c.id, c.code]));
+    const t = { id: uid("t"), name, chapters: chapOrder(P).map(({ ch }) => ({ code: ch.code, summary: ch.summary, parent: ch.parentId ? byId[ch.parentId] : null })) };
+    const own = (await store.get("chapTemplates")) || []; own.push(t); await store.set("chapTemplates", own);
+    close(); toast(`Plantilla «${name}» guardada`);
+  };
+  $("#stClean").onclick = () => { const ids = new Set(emptyChapters().map(c => c.id)); P.chapters = P.chapters.filter(c => !ids.has(c.id)); sel = { chap: null, item: null }; close(); renderAll(); markDirty(); toast(`${ids.size} capítulos vacíos quitados`); };
+};
 
 /* ===== Reforma por estancias ===== */
 const RF_CODES = {
@@ -2349,7 +2517,7 @@ document.addEventListener("click", e => {
   if (!el || el.closest("#modalRoot")) return;
   if (el.tagName === "A") e.preventDefault();
   const fn = actions[el.dataset.act];
-  if (fn){ if (el.dataset.act === "toggle" || el.dataset.act === "addFromBase" || el.dataset.act === "delLine") e.stopPropagation(); fn(el, e); }
+  if (fn){ if (["toggle", "addFromBase", "delLine", "baseGo"].includes(el.dataset.act)) e.stopPropagation(); fn(el, e); }
 });
 document.addEventListener("keydown", e => {
   if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")){ e.preventDefault(); stepItem(e.key === "ArrowUp" ? -1 : 1); return; }
