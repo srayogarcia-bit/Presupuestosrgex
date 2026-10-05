@@ -2104,6 +2104,7 @@ const RF_CODES = {
   yeso_dem:   { code: "E01EEC010", label: "Picar yeso en paredes" },
   alic_dem:   { code: "E01EEA010", label: "Picar alicatado" },
   techo_dem:  { code: "E01EET020", label: "Demoler falso techo" },
+  techoy_dem: { code: "E01EEC030", label: "Picar yeso en techos" },
   rod_dem:    { code: "E01EPP130", label: "Levantar rodapié" },
   san_dem:    { code: "E01EIF080", label: "Levantar aparatos sanitarios" },
   recrecido:  { code: "E10B010",   label: "Recrecido bajo solado nuevo" },
@@ -2111,6 +2112,7 @@ const RF_CODES = {
   yeso_new:   { code: "E08GM010",  label: "Guarnecido y enlucido nuevo" },
   alic_new:   { code: "E11ABCC040",label: "Alicatado nuevo" },
   techo_new:  { code: "E08FAK040", label: "Falso techo nuevo" },
+  techoy_new: { code: "E08GA250",  label: "Guarnecido y enlucido de techos" },
   techo_newh: { code: "E08FAK050", label: "Falso techo nuevo hidrófugo (baños, aseos, cocinas)" },
   rod_new:    { code: "E10EGA010", label: "Rodapié nuevo" },
   pint_par:   { code: "E15EA020",  label: "Pintura en paredes" },
@@ -2120,17 +2122,21 @@ const RF_ZONES = [
   { k: "suelo", label: "Solado", opts: [["", "—"], ["L", "Levantar"], ["N", "Nuevo"], ["LN", "Levantar y nuevo"]] },
   { k: "yeso",  label: "Yeso paredes", opts: [["", "—"], ["L", "Picar"], ["N", "Guarnecer"], ["LN", "Picar y guarnecer"]] },
   { k: "alic",  label: "Alicatado", opts: [["", "—"], ["L", "Picar"], ["N", "Nuevo"], ["LN", "Picar y nuevo"]] },
+  { k: "techoy", label: "Yeso techo", opts: [["", "—"], ["L", "Picar"], ["N", "Guarnecer"], ["LN", "Picar y guarnecer"]] },
   { k: "techo", label: "Falso techo", opts: [["", "—"], ["L", "Demoler"], ["N", "Nuevo"], ["LN", "Demoler y nuevo"]] },
   { k: "rod",   label: "Rodapié", opts: [["", "—"], ["L", "Levantar"], ["N", "Nuevo"], ["LN", "Levantar y nuevo"]] },
   { k: "pint",  label: "Pintura", opts: [["", "—"], ["P", "Paredes"], ["T", "Techo"], ["PT", "Paredes y techo"]] }
 ];
 const RF_TPL = {
   bano: { label: "Baño completo", set: r => Object.assign(r.a, { suelo: "LN", alic: "LN", yeso: "L", techo: "N", rod: "", pint: "T", san: r.a.san || 3, hAlic: r.a.hAlic || 2.2 }) },
-  completa: { label: "Estancia completa", set: r => Object.assign(r.a, { suelo: "LN", yeso: "LN", rod: "LN", pint: "PT" }) },
+  completa: { label: "Estancia completa", set: r => Object.assign(r.a, { suelo: "LN", yeso: "LN", techoy: r.a.techo && r.a.techo.includes("N") ? "" : "LN", rod: "LN", pint: "PT" }) },
   pintura: { label: "Solo pintura", set: r => Object.assign(r.a, { pint: "PT" }) },
   nada: { label: "Vaciar", set: r => { r.a = { hAlic: r.a.hAlic || 2.2 }; } }
 };
-const rfCode = k => (P.reformCodes && P.reformCodes[k]) || RF_CODES[k].code;
+/* Trabajos a más de 3 m: la base de la Junta tiene partidas propias (con andamio) */
+const RF_ALT3 = { yeso_dem: "E01EEC020", yeso_new: "E08GM020", techoy_dem: "E01EEC040", techoy_new: "E08GA280" };
+let _rfH = 0;   // altura de trabajo de la estancia que se está generando
+const rfCode = k => (P.reformCodes && P.reformCodes[k]) || (_rfH > 3 && RF_ALT3[k]) || (P.reformCodes && P.reformCodes[k]) || RF_CODES[k].code;
 const isWet = name => /ba[ñn]o|aseo|cocina|lavadero/i.test(name || "");
 function rfHuecos(str){
   return String(str || "").split(/[;\n]+/).map(s => s.trim()).filter(Boolean).map(s => {
@@ -2149,13 +2155,16 @@ function rfThreshold(code){
   return m ? parseNum(m[1]) : 0;
 }
 /* Genera las líneas de medición de todas las estancias */
+const rfSkips = [];
 function rfBuild(){
+  rfSkips.length = 0;
   const rows = [], f2 = x => String(r2(x)), fc = x => String(r2(x)).replace(".", ",");
   const push = (key, r, line) => rows.push({ code: rfCode(key), line: Object.assign({ n: "1", l: "", a: "", h: "" }, line, { bim: `EST:${r.id}:${key}${line.suf || ""}` }) });
   for (const r of P.rooms || []){
     const a = r.a || {}, A = parseNum(r.area), Pm = parseNum(r.perim), Hf = parseNum(r.height);
     const hFT = parseNum(r.hft), H = hFT > 0 && Hf ? Math.min(Hf, hFT) : Hf;   // paredes solo hasta el falso techo: el plénum no se reviste
     const hA = Math.min(parseNum(a.hAlic) || 2.2, H || 99);
+    _rfH = H || 0;
     const toTxt = hFT > 0 ? " hasta falso techo" : "";
     const hz = rfHuecos(r.huecos), has = (z, ch) => (a[z] || "").includes(ch);
     const alicBand = has("alic", "L") || has("alic", "N");
@@ -2186,6 +2195,9 @@ function rfBuild(){
     if (has("pint", "P")) band("pint_par", z0, H, "paredes" + toTxt);
     // Techo
     if (has("techo", "L")) area("techo_dem", "falso techo");
+    // Yeso en el techo: no se guarnece donde va falso techo nuevo
+    if (has("techoy", "L")) area("techoy_dem", "techo");
+    if (has("techoy", "N")){ if (has("techo", "N")) rfSkips.push(r.name); else area("techoy_new", "techo"); }
     if (has("techo", "N")) area(isWet(r.name) ? "techo_newh" : "techo_new", "falso techo");
     if (has("pint", "T")) area("pint_tec", "techo");
     // Rodapié: perímetro menos anchos de puerta
@@ -2349,6 +2361,7 @@ function rfClick(e){
   if (act === "gen"){
     if (!BASE) toast("Sin base de precios cargada solo se actualizan las partidas que ya están en el presupuesto");
     const { st, missing, n } = rfApply();
+    if (rfSkips.length) setTimeout(() => toast(`Yeso de techo no medido en ${rfSkips.join(", ")}: llevan falso techo nuevo`), 2500);
     const msg = `${n} líneas: ${st.add} nuevas, ${st.upd} actualizadas, ${st.del} retiradas${st.created ? `, ${st.created} partidas creadas` : ""}${st.kept ? `, ${st.kept} conservadas por estar certificadas` : ""}.${missing.length ? " Sin partida: " + missing.join(", ") : ""}`;
     $("#modalRoot").innerHTML = "";
     modal("Mediciones de reforma generadas", `<p>${esc(msg)}</p><p class="hint">Si cambias algo en las estancias y vuelves a generar, se actualiza solo lo que cambia. Las líneas que hayas metido a mano no se tocan.</p>`, [{ label: "Volver a estancias", run: rfOpen }, { label: "Hecho", primary: true }]);
