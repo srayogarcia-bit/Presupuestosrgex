@@ -269,6 +269,14 @@ table.ct tr.tot td{font-weight:600; border-top:1px solid var(--ink)}
   .tabs{display:flex}
   .figures{gap:18px} .fig b{font-size:17px} .fig.main b{font-size:22px}
 }
+/* Pantalla grande: el panel de la base se puede ocultar y quedan dos columnas */
+.base-open{display:none}
+@media (min-width: 1101px){
+  body.base-off main{grid-template-columns:minmax(300px,0.85fr) minmax(480px,1.75fr)}
+  body.base-off #paneBase{display:none}
+  body.base-off .base-open{display:inline-flex}
+}
+@media (max-width: 1100px){ .wide-only{display:none} }
 /* Pantallas medianas: árbol siempre visible + partida o base a la derecha */
 @media (min-width: 701px) and (max-width: 1100px){
   main{grid-template-columns:minmax(270px,0.85fr) minmax(0,1.15fr)}
@@ -350,13 +358,14 @@ table.ct tr.tot td{font-weight:600; border-top:1px solid var(--ink)}
     <div class="pane-head"><h2><span id="detailTitle">Partida</span><span id="detailPos"></span></h2>
       <button class="btn small nav-it" data-act="prevItem" title="Partida anterior (Alt + ↑)" aria-label="Partida anterior">‹</button>
       <button class="btn small nav-it" data-act="nextItem" title="Partida siguiente (Alt + ↓)" aria-label="Partida siguiente">›</button>
+      <button class="btn small base-open" data-act="baseToggle" title="Mostrar el panel de la derecha (Alt + B)" id="btnBaseOpen">Mostrar <span id="baseOpenLbl">base de precios</span></button>
       <button class="btn small presu-only" data-act="moveTo" id="btnMove" title="Mover la partida a otro capítulo">Mover a…</button>
       <button class="btn small danger presu-only" data-act="del" id="btnDel">Eliminar</button></div>
     <div class="scroll"><div class="detail" id="detail"></div></div>
   </section>
 
   <section class="pane" id="paneBase" aria-label="Base de precios">
-    <div class="pane-head"><h2 id="baseTitle">Base de precios</h2><button class="btn small presu-only" data-act="loadBase" id="btnBaseSmall">Cargar BC3</button></div>
+    <div class="pane-head"><h2 id="baseTitle">Base de precios</h2><button class="btn small presu-only" data-act="loadBase" id="btnBaseSmall">Cargar BC3</button><button class="btn small ghost wide-only" data-act="baseToggle" title="Ocultar este panel (Alt + B)" aria-label="Ocultar panel">✕</button></div>
     <div id="baseBody" class="scroll"></div>
   </section>
 </main>
@@ -1302,6 +1311,7 @@ function renderAll(){
   document.querySelectorAll(".modes button").forEach(b => b.classList.toggle("on", b.dataset.m === (isCert() ? "cert" : "presu")));
   $("#tabBase").textContent = isCert() ? "Resumen" : "Base de precios";
   $("#baseTitle").textContent = isCert() ? "Certificación" : "Base de precios";
+  if ($("#baseOpenLbl")) $("#baseOpenLbl").textContent = isCert() ? "resumen" : "base de precios";
   renderHeader(); renderTree(); renderSummary(); renderDetail(); renderCertBar();
   if (isCert()){ if ($("#cpTot")) refreshCertPanel(); else renderCertPanel(); }
 }
@@ -1388,6 +1398,11 @@ const actions = {
     catch(e){ console.error(e); toast("No se ha podido generar el PDF"); }
   },
   up(){ move(-1); }, down(){ move(1); },
+  baseToggle(){
+    const off = document.body.classList.toggle("base-off");
+    try { localStorage.setItem("srgex:baseOff", off ? "1" : ""); } catch(e){}
+    $("#baseOpenLbl").textContent = isCert() ? "resumen" : "base de precios";
+  },
   moveTo(){
     const f = findItem(sel.item); if (!f) return;
     const rows = chapOrder(P).map(({ ch, depth }) => `<button class="mv-row ${ch === f.chap ? "cur" : ""}" data-mv="${ch.id}" style="padding-left:${10 + depth * 16}px" ${ch === f.chap ? "disabled" : ""}>
@@ -2953,6 +2968,8 @@ $("#fRooms").addEventListener("change", async e => {
   if (b && b.map){ BASE = b; buildIndex(); }
   renderAll(); $("#baseBody").innerHTML = ""; renderBase();
   fsInit();
+  try { if (localStorage.getItem("srgex:baseOff")) document.body.classList.add("base-off"); } catch(e){}
+  document.addEventListener("keydown", e => { if (e.altKey && (e.key === "b" || e.key === "B")){ e.preventDefault(); actions.baseToggle(); } });
   $("#aceroList").innerHTML = ACERO.names.map(n => `<option value="${esc(n)}">${esc(String(ACERO.T[n]).replace(".", ","))} ${/^B500|^Ø|^#|^[A-Z]/.test(n) ? "kg/m" : ""}</option>`).join("");
 })();
 </script>
