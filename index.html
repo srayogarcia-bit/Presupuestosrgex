@@ -192,6 +192,8 @@ table.rt input[type=checkbox]{width:17px; height:17px; accent-color:var(--ink)}
 .fs-row{display:flex; justify-content:space-between; gap:10px; align-items:center; padding:8px 10px; border-bottom:1px solid var(--line); flex-wrap:wrap}
 .fs-row.cur{background:var(--sel)}
 .fs-name{font-weight:500; overflow-wrap:anywhere}
+.fam{font-size:11px; font-weight:600; border-radius:999px; padding:1px 8px; margin-left:6px; border:1px solid var(--line); color:var(--muted); white-space:nowrap}
+.fam-P{background:#E3EEF8; color:#1F4E79; border-color:#B9D0E6} .fam-D{background:#FBEBDD; color:#8A4B12; border-color:#EBC9A8} .fam-T{background:#ECE6F5; color:#55348A; border-color:#D2C4E8}
 .fs-cfg{display:flex; gap:8px; align-items:flex-end} .fs-cfg label{flex:1; display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--muted)} .fs-cfg input{border:1px solid var(--line); border-radius:6px; padding:6px 8px; background:var(--surface); color:var(--ink)}
 .fs-acts{display:flex; gap:6px; flex-wrap:wrap}
 .st-h{margin:14px 0 6px; font-size:13.5px}
@@ -1588,6 +1590,24 @@ function buildPdf(P){
 /* ===== Carpeta de proyectos (OneDrive) — File System Access API, Chrome/Edge de escritorio ===== */
 const FS = { root: null, ok: false, mt: {}, savedAt: null, err: false, subName: "" };
 const EXP_RE = /^\d{4}_\d{2,4}_/;   // formato de expediente AAAA_NNN_TIPO_Cliente
+/* Familias de expediente (protocolo SRGex): estructura de carpetas y dónde va cada cosa del presupuesto */
+const FAMILIAS = {
+  P: { label: "Proyecto", calc: "03_CALCULO", pdf: "04_DOCUMENTOS",
+       carpetas: ["00_DATOS", "01_MODELO", "02_CAD", "03_CALCULO", "04_DOCUMENTOS", "05_HITOS", "06_CLIENTE"],
+       tipos: ["ONU", "REF", "REH", "NAV", "MAC", "CUB", "CUV", "PLA", "DEM", "DEV", "LEG", "PLN"] },
+  D: { label: "Dirección de obra", calc: "03_ECONOMICO", pdf: "03_ECONOMICO",
+       carpetas: ["00_DATOS", "01_ACTAS", "02_LIBROS", "03_ECONOMICO", "04_CONTROL_CALIDAD", "05_FOTOS", "06_FINAL_OBRA", "07_CLIENTE"],
+       tipos: ["DOB", "DEO", "CSS", "CFO", "LDE"] },
+  T: { label: "Técnico y catastral", calc: "02_DOCUMENTO", pdf: "02_DOCUMENTO",
+       carpetas: ["00_DATOS", "01_LEVANTAMIENTO", "02_DOCUMENTO", "03_TRAMITACION", "04_CLIENTE"],
+       tipos: ["CEE", "PSS", "TAS", "LEV", "MED", "INF", "CHA", "ESC", "CAT", "SEG", "CEI", "SOL", "VAL", "DIV", "SUB", "OME"] }
+};
+function famOf(dir){
+  const m = String(dir).match(/^\d{4}_\d{2,4}_([A-Za-z]+)/); if (!m) return null;
+  const t = m[1].toUpperCase();
+  for (const k in FAMILIAS) if (FAMILIAS[k].tipos.includes(t)) return k;
+  return null;
+}
 const fsSupported = () => "showDirectoryPicker" in window && window.self === window.top;
 const fsKey = () => P.file ? [P.file.dir, P.file.sub || "", P.file.name].join("/") : "";
 function fsStatus(){
@@ -1627,16 +1647,24 @@ async function fsWalk(dh, path, create){
   for (const part of String(path || "").split(/[\\/]+/).filter(Boolean)) dh = await dh.getDirectoryHandle(part, { create: !!create });
   return dh;
 }
-/* Subcarpeta del expediente donde van los presupuestos: la configurada, o una que contenga «presupuesto» o «medicion» */
-async function fsSubFor(dh, create){
-  if (FS.subName) return { h: await fsWalk(dh, FS.subName, create), name: FS.subName };
+/* Subcarpeta del expediente donde van los presupuestos: la configurada a mano; si no, la de su familia
+   (03_CALCULO en proyectos, 03_ECONOMICO en dirección de obra, 02_DOCUMENTO en técnicos); si el tipo no es conocido,
+   una que contenga «presupuesto» o «medición». Devuelve también dónde van los PDF. */
+async function fsSubFor(dh, create, dirName){
+  if (FS.subName){ const h = await fsWalk(dh, FS.subName, create); return { h, name: FS.subName, pdf: FS.subName }; }
+  const fam = FAMILIAS[famOf(dirName || dh.name)];
+  if (fam){
+    const h = await fsWalk(dh, fam.calc, create);
+    if (create) await fsWalk(dh, fam.pdf, true);
+    return { h, name: fam.calc, pdf: fam.pdf };
+  }
   let alt = null;
   for await (const [n, h] of dh.entries()){
     if (h.kind !== "directory") continue;
-    if (/presupuest/i.test(n)) return { h, name: n };
-    if (!alt && /medici/i.test(n)) alt = { h, name: n };
+    if (/presupuest/i.test(n)) return { h, name: n, pdf: n };
+    if (!alt && /medici/i.test(n)) alt = { h, name: n, pdf: n };
   }
-  return alt || { h: dh, name: "" };
+  return alt || { h: dh, name: "", pdf: "" };
 }
 async function fsFileHandle(dir, name, create, sub){
   const dh = await fsWalk(await FS.root.getDirectoryHandle(dir), sub === undefined ? (P.file && P.file.sub) : sub, create);
@@ -1687,17 +1715,18 @@ async function fsList(){
   const out = [];
   for await (const [name, h] of FS.root.entries()){
     if (h.kind !== "directory" || /^[._]/.test(name)) continue;
-    const files = [], exp = EXP_RE.test(name);
+    const files = [], exp = EXP_RE.test(name), subs = [];
     const scan = async (dh, sub) => { for await (const [fn, fh] of dh.entries()) if (fh.kind === "file" && /\.srgex\.json$/i.test(fn)) files.push({ name: fn, sub }); };
     try {
       await scan(h, "");
       if (exp){
         // busca en todas las subcarpetas de primer nivel (y en la configurada, aunque esté más profunda)
-        for await (const [sn, sh] of h.entries()) if (sh.kind === "directory") await scan(sh, sn).catch(() => {});
+        for await (const [sn, sh] of h.entries()) if (sh.kind === "directory"){ subs.push(sn); await scan(sh, sn).catch(() => {}); }
         if (FS.subName && /[\\/]/.test(FS.subName)){ const d = await fsWalk(h, FS.subName, false).catch(() => null); if (d) await scan(d, FS.subName); }
       }
     } catch(e){}
-    out.push({ name, exp, files });
+    const fk = famOf(name), missing = fk ? FAMILIAS[fk].carpetas.filter(c => !subs.includes(c)) : [];
+    out.push({ name, exp, files, fam: fk, missing });
   }
   return out.sort((a, b) => (b.exp - a.exp) || b.name.localeCompare(a.name, "es"));
 }
@@ -1712,7 +1741,7 @@ actions.misPresupuestos = async function(){
   const nfiles = list.reduce((s, x) => s + x.files.length, 0), nexp = list.filter(x => x.exp).length;
   modal("Mis presupuestos", `<p class="hint">Carpeta: <b>${esc(FS.root.name)}</b> · ${nexp} expedientes · ${nfiles} presupuestos. <a href="#" id="fsChange">Cambiar carpeta</a></p>
     <div class="fs-cfg"><label>Dentro de cada expediente, guardar en la subcarpeta
-      <input id="fsSub" value="${esc(FS.subName)}" placeholder="automático: la que contenga «presupuesto» (o «medición»); si no hay, en la raíz"></label>
+      <input id="fsSub" value="${esc(FS.subName)}" placeholder="automático según el tipo: proyecto → 03_CALCULO · dirección de obra → 03_ECONOMICO · técnico → 02_DOCUMENTO"></label>
       <button class="btn small" id="fsSubSave">Guardar</button></div>
     <input id="fsQ" type="search" placeholder="Buscar expediente, cliente o año" style="width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--surface);margin:8px 0">
     <div id="fsListBox" class="fs-list"></div>
@@ -1722,7 +1751,8 @@ actions.misPresupuestos = async function(){
   const draw = () => {
     const w = fold(q.value).split(/\s+/).filter(Boolean);
     const rows = list.filter(x => (x.exp || other.checked) && w.every(t => fold(x.name).includes(t))).slice(0, 250);
-    box.innerHTML = rows.map(x => `<div class="fs-row ${P.file && P.file.dir === x.name ? "cur" : ""}"><div class="fs-name">📁 ${esc(x.name)}</div><div class="fs-acts">
+    box.innerHTML = rows.map(x => `<div class="fs-row ${P.file && P.file.dir === x.name ? "cur" : ""}"><div class="fs-name">📁 ${esc(x.name)} ${x.fam ? `<span class="fam fam-${x.fam}">${FAMILIAS[x.fam].label}</span>` : (x.exp ? `<span class="fam">tipo sin familia</span>` : "")}</div><div class="fs-acts">
+      ${x.fam && x.missing.length ? `<button class="btn small ghost" data-fsmk="${esc(x.name)}" title="Crear: ${esc(x.missing.join(", "))}">Crear carpetas (${x.missing.length})</button>` : ""}
       ${x.files.map(f => `<button class="btn small ${isCur(x, f) ? "primary" : ""}" data-fsopen="${esc(x.name)}" data-fsfile="${esc(f.name)}" data-fssub="${esc(f.sub)}" title="${esc((f.sub ? f.sub + " / " : "") + f.name)}">Abrir ${esc(f.name.replace(/\.srgex\.json$/i, ""))}${f.sub ? ` <span class="hint">(${esc(f.sub)})</span>` : ""}</button>`).join("")}
       <button class="btn small ghost" data-fsnew="${esc(x.name)}">+ Nuevo aquí</button>
       <button class="btn small ghost" data-fssave="${esc(x.name)}">Guardar el actual aquí</button></div></div>`).join("") || `<div class="empty"><p>Ningún expediente coincide.</p></div>`;
@@ -1732,10 +1762,16 @@ actions.misPresupuestos = async function(){
   $("#fsSubSave").onclick = async () => { FS.subName = $("#fsSub").value.trim().replace(/^[\\/]+|[\\/]+$/g, ""); await store.set("fsSub", FS.subName); toast(FS.subName ? `Los presupuestos nuevos irán a «${FS.subName}» dentro de cada expediente` : "Subcarpeta en automático"); $("#modalRoot").innerHTML = ""; actions.misPresupuestos(); };
   box.onclick = async ev => {
     const b = ev.target.closest("button"); if (!b) return;
+    if (b.dataset.fsmk){
+      const x = list.find(y => y.name === b.dataset.fsmk);
+      try { const dh = await FS.root.getDirectoryHandle(x.name); for (const c of x.missing) await dh.getDirectoryHandle(c, { create: true }); }
+      catch(e){ return toast("No se han podido crear las carpetas"); }
+      toast(`${x.missing.length} carpetas creadas en ${x.name} (estructura de ${FAMILIAS[x.fam].label.toLowerCase()})`); x.missing = []; draw(); return;
+    }
     if (b.dataset.fsopen){ $("#modalRoot").innerHTML = ""; await fsWrite(); return fsOpen(b.dataset.fsopen, b.dataset.fsfile, b.dataset.fssub); }
     const dir = b.dataset.fsnew || b.dataset.fssave, isNew = !!b.dataset.fsnew;
     let target;
-    try { target = await fsSubFor(await FS.root.getDirectoryHandle(dir), true); } catch(e){ return toast("No se ha podido acceder a esa carpeta"); }
+    try { target = await fsSubFor(await FS.root.getDirectoryHandle(dir), true, dir); } catch(e){ return toast("No se ha podido acceder a esa carpeta"); }
     const existing = []; for await (const [fn] of target.h.entries()) existing.push(fn);
     const base = isNew ? "presupuesto" : safeName(P.name);
     let name = base + ".srgex.json", k = 2; while (existing.includes(name)) name = `${base}_${k++}.srgex.json`;
@@ -1745,7 +1781,7 @@ actions.misPresupuestos = async function(){
       P = newProject(); P.name = dir.replace(/^\d{4}_\d+_[A-Za-z]+_?/, "").replace(/_/g, " ") || "Presupuesto";
       sel = { chap: null, item: null }; $("#baseBody").innerHTML = ""; renderAll(); renderBase();
     }
-    P.file = { dir, sub: target.name, name }; FS.mt[fsKey()] = 0;
+    P.file = { dir, sub: target.name, pdf: target.pdf, name }; FS.mt[fsKey()] = 0;
     await fsWrite(true); markDirty();
     toast(`${isNew ? "Presupuesto nuevo creado" : "Guardado"} en ${dir}${target.name ? " / " + target.name : ""}`);
   };
@@ -1754,9 +1790,14 @@ actions.misPresupuestos = async function(){
 async function fsSaveExport(filename, data){
   if (!(P.file && FS.root && FS.ok)) return false;
   try {
-    const fh = await fsFileHandle(P.file.dir, filename, true, P.file.sub), w = await fh.createWritable();
+    let sub = P.file.sub;
+    if (/\.pdf$/i.test(filename)){
+      if (P.file.pdf === undefined){ const fam = FAMILIAS[famOf(P.file.dir)]; P.file.pdf = FS.subName || (fam ? fam.pdf : P.file.sub); }
+      sub = P.file.pdf;
+    }
+    const fh = await fsFileHandle(P.file.dir, filename, true, sub), w = await fh.createWritable();
     await w.write(data instanceof Blob ? data : new Blob([data])); await w.close();
-    toast(`Guardado en ${P.file.dir}${P.file.sub ? " / " + P.file.sub : ""} / ${filename}`); return true;
+    toast(`Guardado en ${P.file.dir}${sub ? " / " + sub : ""} / ${filename}`); return true;
   } catch(e){ return false; }
 }
 
