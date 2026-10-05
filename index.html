@@ -182,6 +182,8 @@ table.rt tr.proy select[data-rf-f="phase"]{border-color:var(--ph-proy); color:va
 table.rt tr.sec td{position:sticky; left:0; font-weight:700; padding:8px 10px; color:#fff; letter-spacing:.01em}
 table.rt tr.sec-act td{background:var(--ph-act)} table.rt tr.sec-proy td{background:var(--ph-proy)} table.rt tr.sec-unica td{background:var(--ph-uni)}
 table.rt tr.sec .hint{color:rgba(255,255,255,.85)}
+table.rt tr.sec td{position:static}
+table.rt tr.sec .sec-lbl{position:sticky; left:10px; display:inline-flex; align-items:center; gap:6px}
 table.rt input[type=checkbox]{width:17px; height:17px; accent-color:var(--ink)}
 .rf-name{display:flex; align-items:center; gap:5px}
 .rf-bulk{display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; padding:8px 10px; margin:6px 0 8px; border:1px dashed var(--line); border-radius:8px; background:var(--surface-2); font-size:12.5px}
@@ -2308,7 +2310,7 @@ function rfRender(){
   w.innerHTML = `<table class="t rt"><thead><tr><th>Estancia</th><th>Fase</th><th class="num">Área</th><th class="num">Perím.</th><th class="num">Altura</th>
     <th class="num" title="Altura del falso techo: las paredes se miden solo hasta aquí">Alt. f. techo</th><th>Huecos</th><th class="num" title="Metros de muro de la estancia que se derriban">Muro derrib.</th>
     ${RF_ZONES.map(z => `<th>${z.label}</th>`).join("")}<th class="num">Alt. alic.</th><th class="num">Sanit.</th><th>Plantilla</th><th></th></tr></thead><tbody>
-    ${groups.map(g => `<tr class="sec sec-${g.ph}"><td colspan="${ncol}"><label><input type="checkbox" data-selsec="${g.ph}" ${g.rows.every(([r]) => rfSel.has(r.id)) ? "checked" : ""}> ${RF_PH[g.ph]} <span class="hint">(${g.rows.length})</span></label></td></tr>${g.rows.map(([r, i]) => row(r, i)).join("")}`).join("")}
+    ${groups.map(g => `<tr class="sec sec-${g.ph}"><td colspan="${ncol}"><label class="sec-lbl"><input type="checkbox" data-selsec="${g.ph}" ${g.rows.every(([r]) => rfSel.has(r.id)) ? "checked" : ""}> ${RF_PH[g.ph]} <span class="hint">(${g.rows.length})</span></label></td></tr>${g.rows.map(([r, i]) => row(r, i)).join("")}`).join("")}
     </tbody></table>`;
   rfBulkBar();
 }
