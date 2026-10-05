@@ -215,6 +215,9 @@ input.kg-man{background:#FFF4E5 !important}
 .incr{display:flex; align-items:center; gap:5px; font-size:12.5px; color:var(--muted); margin-left:6px}
 .incr input{width:52px}
 tr.auto-row td{color:var(--muted); font-style:italic; font-size:12.5px}
+.row.item.msel{background:var(--sel); box-shadow:inset 3px 0 0 var(--accent)}
+.multi-bar{display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:7px 12px; background:var(--sel); border-bottom:1px solid var(--line); font-size:13px}
+.multi-bar[hidden]{display:none} .multi-bar span{color:var(--muted); margin-right:auto}
 .modal .acts{display:flex; gap:8px; justify-content:flex-end; margin-top:16px; flex-wrap:wrap}
 #toast{position:fixed; left:50%; bottom:calc(18px + env(safe-area-inset-bottom,0px)); transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:9px 14px; border-radius:8px; font-size:13px; opacity:0; pointer-events:none; transition:opacity .2s; z-index:30; max-width:90vw}
 #toast.on{opacity:1}
@@ -350,7 +353,8 @@ table.ct tr.tot td{font-weight:600; border-top:1px solid var(--ink)}
       <button class="presu-only btn small ghost" data-act="down" title="Bajar" aria-label="Bajar">↓</button>
       <button class="presu-only btn small ghost danger" data-act="del" title="Eliminar la partida o el capítulo seleccionado" aria-label="Eliminar selección">🗑</button>
     </div>
-    <div class="scroll"><div class="tree" id="tree"></div></div>
+    <div class="multi-bar" id="multiBar" hidden></div>
+    <div class="scroll"><div class="tree" id="tree" title="Ctrl + clic para seleccionar varias partidas; Mayús + clic para un tramo seguido"></div></div>
     <div class="summary presu-only" id="summary"></div>
   </section>
 
@@ -974,7 +978,7 @@ function modal(title, html, actions){
   root.querySelector(".overlay").onclick = e => { if (e.target.classList.contains("overlay")) close(); };
   const first = root.querySelector(".btn.primary") || root.querySelector(".btn"); first && first.focus();
 }
-document.addEventListener("keydown", e => { if (e.key === "Escape") $("#modalRoot").innerHTML = ""; });
+document.addEventListener("keydown", e => { if (e.key === "Escape"){ const had = $("#modalRoot").innerHTML; $("#modalRoot").innerHTML = ""; if (!had && typeof multiSel !== "undefined" && multiSel.size){ multiSel.clear(); renderTree(); } } });
 
 /* --- Utilidades de selección --- */
 const findChap = id => P.chapters.find(c => c.id === id);
@@ -1039,10 +1043,18 @@ function renderTree(){
     html += `<div class="row chap ${depth ? "sub" : ""} ${chSel ? "sel" : ""}" style="padding-left:${8 + ind}px" data-act="selChap" data-id="${ch.id}" role="button" tabindex="0">
       <button class="caret" data-act="toggle" data-id="${ch.id}" aria-label="${ch.collapsed ? "Desplegar" : "Plegar"}">${ch.collapsed ? "▸" : "▾"}</button>
       <span class="code">${esc(ch.code)}</span><span class="sum">${esc(ch.summary)}</span><span class="amt">${m2(chapTotalDeep(ch, P))}</span></div>`;
-    if (!ch.collapsed) html += ch.items.map(it => `<div class="row item ${sel.item === it.id ? "sel" : ""}" style="padding-left:${22 + ind}px" data-act="selItem" data-id="${it.id}" role="button" tabindex="0" draggable="true">
+    if (!ch.collapsed) html += ch.items.map(it => `<div class="row item ${sel.item === it.id && !multiSel.size ? "sel" : ""} ${multiSel.has(it.id) ? "msel" : ""}" style="padding-left:${22 + ind}px" data-act="selItem" data-id="${it.id}" role="button" tabindex="0" draggable="true">
       <span></span><span class="code" title="${esc(it.code)}">${esc(it.code)}</span><span class="sum" title="${esc(it.summary)}">${esc(it.summary || "(sin resumen)")}</span><span class="amt">${m2(itemImporte(it))}</span></div>`).join("");
   }
   box.innerHTML = html;
+  const bar = $("#multiBar");
+  if (bar){
+    if (multiSel.size > 1){
+      const imp = [...multiSel].reduce((s, i) => { const x = findItem(i); return s + (x ? itemImporte(x.item) : 0); }, 0);
+      bar.hidden = false;
+      bar.innerHTML = `<b>${multiSel.size} partidas</b><span>${m2(imp)} €</span><button class="btn small" data-act="multiMove">Mover a…</button><button class="btn small danger" data-act="multiDel">Eliminar</button><button class="btn small ghost" data-act="multiClear">Quitar selección</button>`;
+    } else bar.hidden = true;
+  }
 }
 /* Arrastrar partidas en el árbol: sobre un capítulo → al final; sobre otra partida → delante de ella */
 (function(){
@@ -1330,6 +1342,7 @@ function renderAll(){
 
 /* --- Pestañas (móvil) --- */
 let curTab = "tree";
+const multiSel = new Set(); let selAnchor = null;   // selección múltiple de partidas (Ctrl / Mayús + clic)
 const isMedium = () => window.matchMedia("(min-width: 701px) and (max-width: 1100px)").matches;
 function showTab(t){
   curTab = t;
@@ -1359,8 +1372,23 @@ function updateDetailPos(){
 
 /* --- Acciones --- */
 const actions = {
-  selChap(el){ sel = { chap: el.dataset.id, item: null }; renderTree(); renderDetail(); },
-  selItem(el){ const f = findItem(el.dataset.id); sel = { chap: f.chap.id, item: el.dataset.id }; renderTree(); renderDetail(); if (isNarrow()) showTab("detail"); },
+  selChap(el){ multiSel.clear(); sel = { chap: el.dataset.id, item: null }; renderTree(); renderDetail(); },
+  selItem(el, e){
+    const id = el.dataset.id, f = findItem(id);
+    if (e && (e.ctrlKey || e.metaKey) && !isCert()){
+      if (!multiSel.size && sel.item) multiSel.add(sel.item);
+      multiSel.has(id) ? multiSel.delete(id) : multiSel.add(id);
+      selAnchor = id;
+    } else if (e && e.shiftKey && selAnchor && !isCert()){
+      const order = flatItems().map(x => x.it.id), a = order.indexOf(selAnchor), b = order.indexOf(id);
+      if (a >= 0 && b >= 0){ multiSel.clear(); order.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(x => multiSel.add(x)); }
+    } else { multiSel.clear(); selAnchor = id; }
+    if (multiSel.size === 1){ multiSel.clear(); }
+    sel = { chap: f.chap.id, item: id }; renderTree(); renderDetail(); if (isNarrow() && !multiSel.size) showTab("detail");
+  },
+  multiClear(){ multiSel.clear(); renderTree(); },
+  multiDel(){ actions.del(); },
+  multiMove(){ actions.moveTo(); },
   toggle(el){ const c = findChap(el.dataset.id); c.collapsed = !c.collapsed; renderTree(); markDirty(); },
   addChap(){ const ch = addChapter(); sel = { chap: ch.id, item: null }; renderAll(); markDirty();
     setTimeout(() => { const i = document.querySelector('[data-cf="summary"]'); if (i && !isNarrow()){ i.focus(); i.select(); } }, 0); },
@@ -1417,6 +1445,17 @@ const actions = {
     $("#baseOpenLbl").textContent = isCert() ? "resumen" : "base de precios";
   },
   moveTo(){
+    if (multiSel.size > 1){
+      const ids = flatItems().map(x => x.it.id).filter(i => multiSel.has(i));
+      const rows = chapOrder(P).map(({ ch, depth }) => `<button class="mv-row" data-mv="${ch.id}" style="padding-left:${10 + depth * 16}px"><span class="code">${esc(ch.code)}</span> ${esc(ch.summary)}</button>`).join("");
+      modal(`Mover ${ids.length} partidas a…`, `<p class="hint">Se colocan al final del capítulo elegido, en el mismo orden, con sus mediciones y certificaciones.</p><div class="mv-list">${rows}</div>`, [{ label: "Cancelar" }]);
+      document.querySelectorAll("#modalRoot [data-mv]").forEach(b => b.onclick = () => {
+        $("#modalRoot").innerHTML = ""; const dest = findChap(b.dataset.mv);
+        for (const i of ids){ const x = findItem(i); if (!x) continue; x.chap.items.splice(x.chap.items.indexOf(x.item), 1); dest.items.push(x.item); }
+        dest.collapsed = false; renderAll(); markDirty(); toast(`${ids.length} partidas movidas a ${dest.code ? dest.code + " " : ""}${dest.summary}`);
+      });
+      return;
+    }
     const f = findItem(sel.item); if (!f) return;
     const rows = chapOrder(P).map(({ ch, depth }) => `<button class="mv-row ${ch === f.chap ? "cur" : ""}" data-mv="${ch.id}" style="padding-left:${10 + depth * 16}px" ${ch === f.chap ? "disabled" : ""}>
       <span class="code">${esc(ch.code)}</span> ${esc(ch.summary)}${ch === f.chap ? ' <span class="hint">(está aquí)</span>' : ""}</button>`).join("");
@@ -1425,6 +1464,13 @@ const actions = {
   },
   prevItem(){ stepItem(-1); }, nextItem(){ stepItem(1); },
   del(){
+    if (multiSel.size > 1){
+      const ids = [...multiSel], imp = ids.reduce((s, i) => { const x = findItem(i); return s + (x ? itemImporte(x.item) : 0); }, 0);
+      return modal(`Eliminar ${ids.length} partidas`, `<p>Se eliminarán ${ids.length} partidas, con sus mediciones (${m2(imp)} € de ejecución material).</p>`, [{ label: "Cancelar" }, { label: `Eliminar ${ids.length} partidas`, danger: true, primary: true, run: () => {
+        for (const i of ids){ const x = findItem(i); if (x) x.chap.items.splice(x.chap.items.indexOf(x.item), 1); }
+        multiSel.clear(); sel = { chap: sel.chap, item: null }; renderAll(); markDirty(); toast(`${ids.length} partidas eliminadas`);
+      } }]);
+    }
     const f = sel.item ? findItem(sel.item) : null;
     if (f){ f.chap.items.splice(f.chap.items.indexOf(f.item), 1); sel = { chap: f.chap.id, item: null }; renderAll(); markDirty(); toast("Partida eliminada"); return; }
     const ch = sel.chap ? findChap(sel.chap) : null;
