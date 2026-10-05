@@ -204,6 +204,17 @@ table.rt input[type=checkbox]{width:17px; height:17px; accent-color:var(--ink)}
 .st-row select{border:1px solid var(--line); border-radius:6px; padding:4px 6px; background:var(--surface); color:var(--ink); margin-left:6px}
 .st-list{border:1px solid var(--line); border-radius:8px; max-height:28vh; overflow:auto}
 .st-tpl{display:flex; justify-content:space-between; gap:8px; align-items:center; padding:7px 10px; border-bottom:1px solid var(--line); flex-wrap:wrap}
+.mv-list{max-height:55vh; overflow:auto; border:1px solid var(--line); border-radius:8px; display:flex; flex-direction:column}
+.mv-row{all:unset; display:block; padding:8px 10px; border-bottom:1px solid var(--line); cursor:pointer; font-size:13.5px}
+.mv-row:hover{background:var(--surface-2)} .mv-row.cur{opacity:.55; cursor:default} .mv-row .code{font-weight:600; margin-right:4px}
+.row.item[draggable="true"]{cursor:grab} .row.dragging{opacity:.4}
+.row.drop-on{outline:2px dashed var(--accent); outline-offset:-2px}
+td.w-pf{width:118px} td.w-pf input{width:100%}
+input.pf-bad{border-color:var(--danger, #b42318) !important}
+input.kg-man{background:#FFF4E5 !important}
+.incr{display:flex; align-items:center; gap:5px; font-size:12.5px; color:var(--muted); margin-left:6px}
+.incr input{width:52px}
+tr.auto-row td{color:var(--muted); font-style:italic; font-size:12.5px}
 .modal .acts{display:flex; gap:8px; justify-content:flex-end; margin-top:16px; flex-wrap:wrap}
 #toast{position:fixed; left:50%; bottom:calc(18px + env(safe-area-inset-bottom,0px)); transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:9px 14px; border-radius:8px; font-size:13px; opacity:0; pointer-events:none; transition:opacity .2s; z-index:30; max-width:90vw}
 #toast.on{opacity:1}
@@ -339,6 +350,7 @@ table.ct tr.tot td{font-weight:600; border-top:1px solid var(--ink)}
     <div class="pane-head"><h2><span id="detailTitle">Partida</span><span id="detailPos"></span></h2>
       <button class="btn small nav-it" data-act="prevItem" title="Partida anterior (Alt + ↑)" aria-label="Partida anterior">‹</button>
       <button class="btn small nav-it" data-act="nextItem" title="Partida siguiente (Alt + ↓)" aria-label="Partida siguiente">›</button>
+      <button class="btn small presu-only" data-act="moveTo" id="btnMove" title="Mover la partida a otro capítulo">Mover a…</button>
       <button class="btn small danger presu-only" data-act="del" id="btnDel">Eliminar</button></div>
     <div class="scroll"><div class="detail" id="detail"></div></div>
   </section>
@@ -352,6 +364,7 @@ table.ct tr.tot td{font-weight:600; border-top:1px solid var(--ink)}
 
 <input type="file" id="fBase" accept=".bc3,.BC3" class="hidden">
 <input type="file" id="fOpen" accept=".bc3,.BC3,.json" class="hidden">
+<datalist id="aceroList"></datalist>
 <input type="file" id="fRooms" accept=".csv,.txt,.json" class="hidden">
 <input type="file" id="fMeas" accept=".csv,.txt,.json,.tsv" class="hidden">
 <div id="toast" role="status" aria-live="polite"></div>
@@ -590,6 +603,8 @@ function newProject() {
 }
 
 /* Cálculos */
+/* Id que se exporta: las líneas automáticas (despuntes…) no llevan Id de elemento */
+const bimOut = b => b && !/^AUTO:/.test(b) ? b : "";
 function lineParcial(l) {
   const vals = [l.n, l.l, l.a, l.h].filter(x => !isBlank(x));
   if (!vals.length) return 0;
@@ -756,7 +771,7 @@ function buildBC3(P) {
       }
       if (it.lines && it.lines.length) {
         const lines = it.lines.map(l => {
-          const com = bcClean(l.c) + (l.bim ? "#" + bcClean(l.bim) : "");
+          const com = bcClean(l.c) + (bimOut(l.bim) ? "#" + bcClean(l.bim) : "");
           return `\\${com}\\${fLine(l.n)}\\${fLine(l.l)}\\${fLine(l.a)}\\${fLine(l.h)}\\`;
         }).join("");
         L.push(`~M|${cc}\\${code}|${ci + 1}\\${ii + 1}\\|${fN(itemQty(it), 3)}|${lines}|`);
@@ -807,7 +822,8 @@ const HEAD = {
   l: ["largo", "longitud", "length", "area", "área", "superficie", "volumen", "volume"],
   a: ["ancho", "anchura", "width"],
   h: ["alto", "altura", "height"],
-  bim: ["id", "elementid", "revitid", "idrevit", "guid", "ifcguid"]
+  bim: ["id", "elementid", "revitid", "idrevit", "guid", "ifcguid"],
+  pf: ["perfil", "seccion", "sección", "profile", "section", "tipodeperfil", "tipoperfil"]
 };
 const keyOf = h => {
   const k = String(h || "").toLowerCase().replace(/[\s_\-.]/g, "");
@@ -862,7 +878,8 @@ function parseMeasFile(text, name) {
       l: isBlank(r.l) ? "" : String(parseNum(r.l)),
       a: isBlank(r.a) ? "" : String(parseNum(r.a)),
       h: isBlank(r.h) ? "" : String(parseNum(r.h)),
-      bim: isBlank(r.bim) ? "" : String(r.bim)
+      bim: isBlank(r.bim) ? "" : String(r.bim),
+      pf: isBlank(r.pf) ? "" : String(r.pf)
     }
   }));
 }
@@ -901,6 +918,7 @@ const store = {
 };
 function markDirty(){
   ensureIds(P);
+  for (const ch of P.chapters) for (const it of ch.items) if (parseNum(it.incr) > 0 && it.lines.length) syncIncr(it);
   P.localAt = Date.now();
   fsSchedule();
   $("#saveState").textContent = "Guardando…";
@@ -1012,13 +1030,106 @@ function renderTree(){
     html += `<div class="row chap ${depth ? "sub" : ""} ${chSel ? "sel" : ""}" style="padding-left:${8 + ind}px" data-act="selChap" data-id="${ch.id}" role="button" tabindex="0">
       <button class="caret" data-act="toggle" data-id="${ch.id}" aria-label="${ch.collapsed ? "Desplegar" : "Plegar"}">${ch.collapsed ? "▸" : "▾"}</button>
       <span class="code">${esc(ch.code)}</span><span class="sum">${esc(ch.summary)}</span><span class="amt">${m2(chapTotalDeep(ch, P))}</span></div>`;
-    if (!ch.collapsed) html += ch.items.map(it => `<div class="row item ${sel.item === it.id ? "sel" : ""}" style="padding-left:${22 + ind}px" data-act="selItem" data-id="${it.id}" role="button" tabindex="0">
+    if (!ch.collapsed) html += ch.items.map(it => `<div class="row item ${sel.item === it.id ? "sel" : ""}" style="padding-left:${22 + ind}px" data-act="selItem" data-id="${it.id}" role="button" tabindex="0" draggable="true">
       <span></span><span class="code" title="${esc(it.code)}">${esc(it.code)}</span><span class="sum" title="${esc(it.summary)}">${esc(it.summary || "(sin resumen)")}</span><span class="amt">${m2(itemImporte(it))}</span></div>`).join("");
   }
   box.innerHTML = html;
 }
+/* Arrastrar partidas en el árbol: sobre un capítulo → al final; sobre otra partida → delante de ella */
+(function(){
+  const tree = document.getElementById("tree"); let dragId = null;
+  const clear = () => tree.querySelectorAll(".drop-on").forEach(x => x.classList.remove("drop-on"));
+  tree.addEventListener("dragstart", e => {
+    const r = e.target.closest(".row.item"); if (!r || isCert()) return e.preventDefault();
+    dragId = r.dataset.id; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", dragId); r.classList.add("dragging");
+  });
+  tree.addEventListener("dragend", e => { dragId = null; clear(); tree.querySelectorAll(".dragging").forEach(x => x.classList.remove("dragging")); });
+  tree.addEventListener("dragover", e => {
+    if (!dragId) return; const r = e.target.closest(".row.chap, .row.item"); if (!r) return;
+    e.preventDefault(); clear(); r.classList.add("drop-on");
+  });
+  tree.addEventListener("drop", e => {
+    if (!dragId) return; const r = e.target.closest(".row.chap, .row.item"); if (!r) return;
+    e.preventDefault(); clear();
+    if (r.classList.contains("chap")) moveItemTo(dragId, r.dataset.id);
+    else { const f = findItem(r.dataset.id); if (f) moveItemTo(dragId, f.chap.id, r.dataset.id); }
+    dragId = null;
+  });
+})();
 function refreshTreeAmounts(){
   renderTree(); renderHeader(); renderSummary();
+}
+
+/* ===== Prontuario de acero (kg/m y kg/m²) =====
+   Laminados: pesos de tabla (series UNE-EN 10365). Tubos: masa calculada según UNE-EN 10219 (radios exteriores
+   2t, 2,5t o 3t). Corrugado, redondo, pletina, chapa y malla: geometría × 7.850 kg/m³. */
+const ACERO = (() => {
+  const T = {}, add = (serie, pares) => pares.split(" ").forEach(p => { const [d, kg] = p.split(":"); T[serie + " " + d] = +kg; });
+  add("IPE", "80:6.0 100:8.1 120:10.4 140:12.9 160:15.8 180:18.8 200:22.4 220:26.2 240:30.7 270:36.1 300:42.2 330:49.1 360:57.1 400:66.3 450:77.6 500:90.7 550:106 600:122");
+  add("HEA", "100:16.7 120:19.9 140:24.7 160:30.4 180:35.5 200:42.3 220:50.5 240:60.3 260:68.2 280:76.4 300:88.3 320:97.6 340:105 360:112 400:125 450:140 500:155 550:166 600:178");
+  add("HEB", "100:20.4 120:26.7 140:33.7 160:42.6 180:51.2 200:61.3 220:71.5 240:83.2 260:93.0 280:103 300:117 320:127 340:134 360:142 400:155 450:171 500:187 550:199 600:212");
+  add("HEM", "100:41.8 120:52.1 140:63.2 160:76.2 180:88.9 200:103 220:117 240:157 260:172 280:189 300:238 320:245 340:248 360:250 400:256 450:263 500:270 550:278 600:285");
+  add("IPN", "80:5.94 100:8.34 120:11.1 140:14.3 160:17.9 180:21.9 200:26.2 220:31.1 240:36.2 260:41.9 280:47.9 300:54.2 320:61.0 340:68.0 360:76.1 380:84.0 400:92.4");
+  add("UPN", "80:8.64 100:10.6 120:13.4 140:16.0 160:18.8 180:22.0 200:25.3 220:29.4 240:33.2 260:37.9 280:41.8 300:46.2 320:59.5 350:60.6 380:63.1 400:71.8");
+  add("L", "20x3:0.88 25x3:1.12 30x3:1.36 30x4:1.78 35x4:2.09 40x4:2.42 40x5:2.97 45x5:3.38 50x5:3.77 50x6:4.47 60x6:5.42 70x7:7.38 80x8:9.63 90x9:12.2 100x10:15.0 120x12:21.6");
+  const r3 = x => Math.round(x * 1000) / 1000;
+  const rect = (B, H, t) => { const ro = t <= 6 ? 2 * t : t <= 10 ? 2.5 * t : 3 * t, ri = ro - t; return r3((2 * t * (B + H - 2 * t) - (4 - Math.PI) * (ro * ro - ri * ri)) * 0.00785); };
+  const circ = (D, t) => r3(Math.PI * t * (D - t) * 0.00785);
+  const barra = d => r3(Math.PI * d * d / 4 * 0.00785);
+  // Tubos de catálogo (para el desplegable); cualquier otra medida se calcula igual al escribirla
+  "20x1.5 20x2 30x2 30x3 40x2 40x3 40x4 50x2 50x3 50x4 50x5 60x3 60x4 60x5 70x3 70x4 70x5 80x3 80x4 80x5 80x6 90x4 90x5 90x6 100x4 100x5 100x6 100x8 120x5 120x6 120x8 140x5 140x6 140x8 150x5 150x6 150x8 150x10 160x6 160x8 160x10 200x6 200x8 200x10"
+    .split(" ").forEach(s => { const [b, t] = s.split("x").map(Number); T[`#${b}x${b}x${String(t).replace(".", ",")}`] = rect(b, b, t); });
+  "40x20x2 50x30x2 50x30x3 60x40x2 60x40x3 60x40x4 80x40x3 80x40x4 100x50x3 100x50x4 100x50x5 100x60x4 100x60x5 120x60x4 120x60x5 120x80x4 120x80x5 120x80x6 140x80x5 140x80x6 150x100x5 150x100x6 150x100x8 160x80x5 160x80x6 200x100x5 200x100x6 200x100x8 200x100x10"
+    .split(" ").forEach(s => { const [b, h, t] = s.split("x").map(Number); T[`#${b}x${h}x${t}`] = rect(b, h, t); });
+  "33.7x2.6 42.4x2.6 48.3x3.2 60.3x3.2 76.1x3.2 88.9x3.2 88.9x4 101.6x4 114.3x4 114.3x5 139.7x5 168.3x5 168.3x6"
+    .split(" ").forEach(s => { const [d, t] = s.split("x").map(Number); T[`Ø${String(d).replace(".", ",")}x${String(t).replace(".", ",")}`] = circ(d, t); });
+  [6, 8, 10, 12, 14, 16, 20, 25, 32].forEach(d => T[`B500S Ø${d}`] = barra(d));
+  const num = s => parseFloat(String(s).replace(",", "."));
+  /* Interpreta lo que se escriba: «IPE 120», «ipe120», «HEB-200», «L 50x5», «#100x100x5», «TR 100x50x4»,
+     «CHS 114,3x4», «Ø12» (corrugado), «R 20» (redondo), «PL 100x10» (pletina), «CH 8» (chapa, kg/m²),
+     «ME 15x15 5-5» (malla, kg/m²) */
+  function lookup(txt){
+    const s = String(txt || "").trim(); if (!s) return null;
+    const u = s.toUpperCase().replace(/[–—]/g, "-").replace(/\s+/g, " ");
+    let m = u.match(/^(IPE|HEA|HEB|HEM|IPN|UPN)\s*-?\s*(\d{2,3})\b/);
+    if (m && T[m[1] + " " + m[2]]) return { name: m[1] + " " + m[2], kg: T[m[1] + " " + m[2]], ud: "kg/m", src: "tabla" };
+    m = u.match(/^L\s*-?\s*(\d+)\s*[X×]\s*(\d+)$/) || u.match(/^L\s*-?\s*(\d+)\s*[X×]\s*\1\s*[X×]\s*(\d+)$/);
+    if (m && T[`L ${m[1]}x${m[2]}`]) return { name: `L ${m[1]}x${m[2]}`, kg: T[`L ${m[1]}x${m[2]}`], ud: "kg/m", src: "tabla" };
+    m = u.match(/^(?:#|SHS|RHS|TC|TR|TUBO)?\s*(\d+(?:[.,]\d+)?)\s*[X×]\s*(\d+(?:[.,]\d+)?)\s*[X×]\s*(\d+(?:[.,]\d+)?)$/);
+    if (m){ const [B, H, t] = [num(m[1]), num(m[2]), num(m[3])]; return { name: `#${m[1]}x${m[2]}x${m[3]}`, kg: rect(B, H, t), ud: "kg/m", src: "UNE-EN 10219" }; }
+    m = u.match(/^(?:CHS|Ø|TUBO RED(?:ONDO)?)\s*(\d+(?:[.,]\d+)?)\s*[X×]\s*(\d+(?:[.,]\d+)?)$/);
+    if (m) return { name: `Ø${m[1]}x${m[2]}`, kg: circ(num(m[1]), num(m[2])), ud: "kg/m", src: "UNE-EN 10219" };
+    m = u.match(/^(?:B500[SC]?\s*)?Ø\s*(\d+)$/) || u.match(/^(?:CORRUGADO|B500[SC]?)\s*Ø?\s*(\d+)$/);
+    if (m) return { name: `B500S Ø${m[1]}`, kg: barra(num(m[1])), ud: "kg/m", src: "geometría" };
+    m = u.match(/^(?:R|REDONDO)\s*(\d+(?:[.,]\d+)?)$/);
+    if (m) return { name: `Redondo Ø${m[1]}`, kg: barra(num(m[1])), ud: "kg/m", src: "geometría" };
+    m = u.match(/^(?:PL|PLETINA)\s*(\d+(?:[.,]\d+)?)\s*[X×]\s*(\d+(?:[.,]\d+)?)$/);
+    if (m) return { name: `PL ${m[1]}x${m[2]}`, kg: r3(num(m[1]) * num(m[2]) * 0.00785), ud: "kg/m", src: "geometría" };
+    m = u.match(/^(?:CH|CHAPA)\s*(\d+(?:[.,]\d+)?)$/);
+    if (m) return { name: `Chapa ${m[1]} mm`, kg: r3(num(m[1]) * 7.85), ud: "kg/m²", src: "geometría" };
+    m = u.match(/^ME\s*(\d+)\s*[X×]\s*(\d+)\s*(?:Ø|A)?\s*(\d+(?:[.,]\d+)?)\s*-\s*(\d+(?:[.,]\d+)?)$/);
+    if (m){ const sx = num(m[1]) / 100, sy = num(m[2]) / 100; return { name: `ME ${m[1]}x${m[2]} Ø${m[3]}-${m[4]}`, kg: r3(barra(num(m[3])) / sy + barra(num(m[4])) / sx), ud: "kg/m²", src: "geometría" }; }
+    return null;
+  }
+  return { T, lookup, names: Object.keys(T) };
+})();
+/* Aplica el prontuario a una línea de medición de una partida en kg: el peso unitario va en la columna Alto */
+function aceroAplicar(l){
+  const r = ACERO.lookup(l.pf || "") || (!l.pf ? ACERO.lookup(l.c || "") : null);
+  if (!r) return false;
+  l.pf = r.name; l.h = String(r.kg); l.kgSrc = "p";
+  return true;
+}
+const esKg = it => /^kg$/i.test(String(it.unit || "").trim());
+/* Despuntes y solapes: línea automática al final, recalculada con el resto */
+function syncIncr(it){
+  const pct = parseNum(it.incr);
+  const i = it.lines.findIndex(l => l.bim === "AUTO:despuntes");
+  if (!(pct > 0)){ if (i >= 0){ it.lines.splice(i, 1); } return; }
+  const base = it.lines.reduce((s, l) => l.bim === "AUTO:despuntes" ? s : s + lineParcial(l), 0);
+  const line = { c: `Despuntes y solapes ${String(pct).replace(".", ",")} %`, n: String(pct / 100), l: String(r2(base)), a: "", h: "", bim: "AUTO:despuntes" };
+  if (i >= 0) Object.assign(it.lines[i], line); else it.lines.push(Object.assign({ id: uid("l") }, line));
+  if (i >= 0 && i !== it.lines.length - 1){ const [x] = it.lines.splice(i, 1); it.lines.push(x); }
 }
 
 /* --- Render: detalle --- */
@@ -1029,6 +1140,7 @@ function renderDetailInner(){
   const f = sel.item ? findItem(sel.item) : null;
   const ch = !f && sel.chap ? findChap(sel.chap) : null;
   $("#btnDel").disabled = !f && !ch;
+  $("#btnMove").disabled = !f;
   if (f){ $("#detailTitle").textContent = "Partida"; box.innerHTML = itemDetail(f.item); return; }
   if (ch){
     $("#detailTitle").textContent = "Capítulo";
@@ -1050,13 +1162,17 @@ function itemDetail(it){
     <table class="t"><thead><tr><th>Código</th><th>Ud</th><th>Resumen</th><th class="num">Rend.</th><th class="num">Precio</th><th class="num">Importe</th></tr></thead><tbody>
     ${dec.rows.map(r => `<tr><td>${esc(r.code)}</td><td>${esc(r.unit)}</td><td>${esc(r.summary)}</td><td class="num">${m3(r.rend * r.factor)}</td><td class="num">${m2(r.price)}</td><td class="num">${m2(r.imp)}</td></tr>`).join("")}
     </tbody></table></div></details>` : "";
-  const lines = it.lines.map((l, i) => `<tr data-li="${i}">
+  const kg = esKg(it);
+  const lines = it.lines.map((l, i) => l.bim === "AUTO:despuntes" ? `<tr data-li="${i}" data-auto="1" class="auto-row">
+      <td colspan="${kg ? 3 : 2}">${esc(l.c)}</td><td class="num">${esc(numStr(l.n).replace(".", ","))}</td><td class="num al-l">${m2(parseNum(l.l))}</td><td></td><td></td>
+      <td class="w-p parc">${m2(lineParcial(l))}</td><td></td></tr>` : `<tr data-li="${i}">
       <td><input data-lf="c" value="${esc(l.c)}" aria-label="Comentario"></td>
       <td class="w-id"><input data-lf="bim" value="${esc(l.bim || "")}" aria-label="Id del elemento" placeholder="—"></td>
+      ${kg ? `<td class="w-pf"><input data-lf="pf" list="aceroList" value="${esc(l.pf || "")}" placeholder="IPE 120" aria-label="Perfil" class="${l.pf && !ACERO.lookup(l.pf) ? "pf-bad" : ""}"></td>` : ""}
       <td class="w-n"><input class="num" data-lf="n" inputmode="decimal" value="${esc(numStr(l.n))}" aria-label="Unidades"></td>
       <td class="w-d"><input class="num" data-lf="l" inputmode="decimal" value="${esc(numStr(l.l))}" aria-label="Largo"></td>
       <td class="w-d"><input class="num" data-lf="a" inputmode="decimal" value="${esc(numStr(l.a))}" aria-label="Ancho"></td>
-      <td class="w-d"><input class="num" data-lf="h" inputmode="decimal" value="${esc(numStr(l.h))}" aria-label="Alto"></td>
+      <td class="w-d"><input class="num ${kg && l.pf && l.kgSrc === "m" ? "kg-man" : ""}" data-lf="h" inputmode="decimal" value="${esc(numStr(l.h))}" aria-label="${kg ? "Peso unitario" : "Alto"}" ${kg && l.pf && l.kgSrc === "m" ? 'title="Peso escrito a mano: no es el del prontuario"' : ""}></td>
       <td class="w-p parc">${m2(lineParcial(l))}</td>
       <td class="w-x"><button class="btn small ghost" data-act="delLine" data-li="${i}" aria-label="Eliminar línea">×</button></td></tr>`).join("");
   return `<div class="grid">
@@ -1068,10 +1184,11 @@ function itemDetail(it){
   <details class="blk"${it.text ? "" : ""}><summary>Texto descriptivo <em>${it.text ? it.text.length + " caracteres" : "vacío"}</em></summary><div class="blk-body"><label class="f"><textarea data-if="text" aria-label="Texto descriptivo">${esc(it.text)}</textarea></label></div></details>
   ${decHtml}
   <details class="blk" open><summary>Mediciones <em>${hasLines ? `${it.lines.length} líneas · ${it.lines.filter(l => !isBlank(l.bim)).length} con Id` : "cantidad directa"}</em></summary><div class="blk-body">
-    ${hasLines ? `<div class="meas-wrap"><table class="t meas" id="measTable"><thead><tr><th>Comentario</th><th title="Id del elemento en el modelo (Revit, IFC…)">Id</th><th class="num">Uds</th><th class="num">Largo</th><th class="num">Ancho</th><th class="num">Alto</th><th class="num">Parcial</th><th></th></tr></thead><tbody>${lines}</tbody></table></div>`
+    ${hasLines ? `<div class="meas-wrap"><table class="t meas" id="measTable"><thead><tr><th>Comentario</th><th title="Id del elemento en el modelo (Revit, IFC…)">Id</th>${kg ? `<th title="Perfil del prontuario: escribe o elige (IPE 120, HEB 200, #100x100x5, Ø12, PL 100x10, CH 8…)">Perfil</th>` : ""}<th class="num">Uds</th><th class="num">Largo</th><th class="num">Ancho</th><th class="num">${kg ? "kg/m · kg/m²" : "Alto"}</th><th class="num">Parcial</th><th></th></tr></thead><tbody>${lines}</tbody></table></div>`
       : `<div class="grid" style="grid-template-columns:160px 1fr"><label class="f">Cantidad<input class="num" data-if="qty" inputmode="decimal" value="${esc(numStr(it.qty))}"></label></div>`}
-    <div class="meas-foot"><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn small" data-act="addLine">+ Línea</button><button class="btn small" data-act="pasteLines">Pegar desde Excel</button></div>
-    <span class="hint">Las celdas vacías no multiplican, como en Presto.</span></div>
+    <div class="meas-foot"><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><button class="btn small" data-act="addLine">+ Línea</button><button class="btn small" data-act="pasteLines">Pegar desde Excel</button>
+      ${kg ? `<label class="incr">Despuntes y solapes <input class="num" data-if="incr" inputmode="decimal" value="${esc(numStr(it.incr || ""))}" placeholder="0"> %</label>` : ""}</div>
+    <span class="hint">${kg ? "Escribe el perfil y el peso por metro se pone solo (en chapas y mallas, kg/m²: Largo × Ancho). " : ""}Las celdas vacías no multiplican, como en Presto.</span></div>
   </div></details>
   <div class="big-tot"><div><span>Medición (${esc(it.unit || "ud")})</span><b id="dQty">${m2(itemQty(it))}</b></div><div><span>Precio</span><b id="dPrice">${m2(it.price)}</b></div><div><span>Importe</span><b id="dImp">${m2(itemImporte(it))} €</b></div></div>`;
 }
@@ -1271,6 +1388,13 @@ const actions = {
     catch(e){ console.error(e); toast("No se ha podido generar el PDF"); }
   },
   up(){ move(-1); }, down(){ move(1); },
+  moveTo(){
+    const f = findItem(sel.item); if (!f) return;
+    const rows = chapOrder(P).map(({ ch, depth }) => `<button class="mv-row ${ch === f.chap ? "cur" : ""}" data-mv="${ch.id}" style="padding-left:${10 + depth * 16}px" ${ch === f.chap ? "disabled" : ""}>
+      <span class="code">${esc(ch.code)}</span> ${esc(ch.summary)}${ch === f.chap ? ' <span class="hint">(está aquí)</span>' : ""}</button>`).join("");
+    modal(`Mover ${f.item.code || "la partida"} a…`, `<p class="hint">Elige el capítulo de destino. La partida se coloca al final, con sus mediciones y certificaciones. También puedes arrastrarla en el árbol.</p><div class="mv-list">${rows}</div>`, [{ label: "Cancelar" }]);
+    document.querySelectorAll("#modalRoot [data-mv]").forEach(b => b.onclick = () => { $("#modalRoot").innerHTML = ""; moveItemTo(f.item.id, b.dataset.mv); });
+  },
   prevItem(){ stepItem(-1); }, nextItem(){ stepItem(1); },
   del(){
     const f = sel.item ? findItem(sel.item) : null;
@@ -1364,7 +1488,12 @@ function move(d){
   if (sel.item){
     const f = findItem(sel.item); if (!f) return;
     const arr = f.chap.items, i = arr.indexOf(f.item), j = i + d;
-    if (j < 0 || j >= arr.length) return;
+    if (j < 0 || j >= arr.length){
+      // en el borde del capítulo: pasa al capítulo anterior o siguiente
+      const order = chapOrder(P).map(o => o.ch), k = order.indexOf(f.chap), dest = order[k + d];
+      if (!dest) return;
+      return moveItemTo(f.item.id, dest.id, d < 0 ? null : (dest.items[0] ? dest.items[0].id : null));
+    }
     [arr[i], arr[j]] = [arr[j], arr[i]];
   } else if (sel.chap){
     const arr = P.chapters, ch = findChap(sel.chap);
@@ -1375,6 +1504,18 @@ function move(d){
     [arr[i], arr[j]] = [arr[j], arr[i]];
   } else return;
   renderTree(); markDirty();
+}
+/* Mueve una partida a otro capítulo (al final, o delante de beforeId) */
+function moveItemTo(itemId, chapId, beforeId){
+  const f = findItem(itemId), dest = findChap(chapId); if (!f || !dest) return;
+  if (beforeId === itemId) return;
+  f.chap.items.splice(f.chap.items.indexOf(f.item), 1);
+  const k = beforeId ? dest.items.findIndex(i => i.id === beforeId) : -1;
+  if (k < 0) dest.items.push(f.item); else dest.items.splice(k, 0, f.item);
+  dest.collapsed = false;
+  sel = { chap: dest.id, item: itemId };
+  renderAll(); markDirty();
+  if (f.chap !== dest) toast(`${f.item.code || "Partida"} movida a ${dest.code ? dest.code + " " : ""}${dest.summary}`);
 }
 function addPastedLines(txt){
   const f = findItem(sel.item); if (!f || !txt.trim()) return;
@@ -1439,7 +1580,7 @@ function buildXlsx(P){
         const first = mr.length;
         it.lines.forEach(l => {
           const r = mr.length;
-          mr.push(["", "", l.c, nv(l.n), nv(l.l), nv(l.a), nv(l.h), lineParcial(l), "", l.bim || ""]);
+          mr.push(["", "", l.c, nv(l.n), nv(l.l), nv(l.a), nv(l.h), lineParcial(l), "", bimOut(l.bim)]);
           mf.push({ r, c: 7, f: `IF(COUNT(D${r + 1}:G${r + 1})=0,0,PRODUCT(D${r + 1}:G${r + 1}))`, v: lineParcial(l), z: FMT3 });
         });
         mf.push({ r: hr, c: 8, f: `ROUND(SUM(H${first + 1}:H${mr.length}),2)`, v: itemQty(it), z: FMT2 });
@@ -1566,7 +1707,7 @@ function buildPdf(P){
     font("normal", 6.5);
     if (it.lines.length){
       for (const l of it.lines){
-        const comTxt = (l.c || "") + (l.bim ? (l.c ? "  " : "") + "[Id " + l.bim + "]" : "");
+        const comTxt = (l.c || "") + (bimOut(l.bim) ? (l.c ? "  " : "") + "[Id " + l.bim + "]" : "");
         const com = comTxt ? wrap(comTxt, 58) : [""];
         const h = 2.9 * Math.max(1, com.length);
         ensure(h + 1);
@@ -2304,7 +2445,7 @@ function renderDetailCert(){
     const v = k => isBlank(l[k]) ? "" : (k === "n" ? NFU.format(parseNum(l[k])) : m2(parseNum(l[k])));
     return `<tr class="${on ? "on" : ""} ${other ? "done" : ""}">
       <td class="w-x"><input type="checkbox" data-chk="${l.id}" aria-label="Ejecutada" ${on || other ? "checked" : ""} ${other || locked ? "disabled" : ""}></td>
-      <td>${esc(l.c)}</td><td class="idc">${esc(l.bim || "")}</td><td class="num">${v("n")}</td><td class="num">${v("l")}</td><td class="num">${v("a")}</td><td class="num">${v("h")}</td>
+      <td>${esc(l.c)}</td><td class="idc">${esc(bimOut(l.bim))}</td><td class="num">${v("n")}</td><td class="num">${v("l")}</td><td class="num">${v("a")}</td><td class="num">${v("h")}</td>
       <td class="num">${m2(l.id === "__all" ? itemQty(it) : lineParcial(l))}</td><td>${other ? `<span class="flag done">C${P.certs[at].n}</span>` : ""}</td></tr>`;
   }).join("");
   box.innerHTML = `<h3 class="dh">${esc(it.code)} <span>${esc(it.unit)}</span></h3><p class="dsum">${esc(it.summary)} · ${m2(it.price)} €/${esc(it.unit || "ud")}</p>
@@ -2495,7 +2636,7 @@ function buildPdfCert(P, ci){
     font("normal", 6);
     const chk = new Set(e.chk || []);
     const done = it.lines.length ? it.lines.filter(l => chk.has(l.id)) : (chk.has("__all") ? [{ c: "Partida completa", __all: true }] : []);
-    for (const l of done){ ensure(3); txt("· " + (l.c || "Línea de medición") + (l.bim ? "  [Id " + l.bim + "]" : ""), 41, y); right(m2(l.__all ? itemQty(it) : lineParcial(l)), X.act, y); y += 2.7; }
+    for (const l of done){ ensure(3); txt("· " + (l.c || "Línea de medición") + (bimOut(l.bim) ? "  [Id " + l.bim + "]" : ""), 41, y); right(m2(l.__all ? itemQty(it) : lineParcial(l)), X.act, y); y += 2.7; }
     if (parseNum(e.ojo)){ ensure(3); doc.setTextColor(140, 80, 0); txt("* Cantidad introducida manualmente" + (e.nota ? ": " + e.nota : ""), 41, y); right(m2(parseNum(e.ojo)), X.act, y); y += 2.7; }
     doc.setTextColor(0); y += 1.8;
   }
@@ -2612,6 +2753,7 @@ $("#detail").addEventListener("input", e => {
       }
     }
     else if (k === "qty") it.qty = isBlank(t.value) ? "" : String(parseNum(t.value));
+    else if (k === "incr"){ it.incr = isBlank(t.value) ? "" : String(parseNum(t.value)); syncIncr(it); if (it.lines.length) { refreshTreeAmounts(); markDirty(); return renderDetailKeepFocus("incr"); } }
     else if (k === "code") it.code = t.value.replace(/[|~\\#\s]/g, "");
     else it[k] = t.value;
     refreshDetailTotals(it); refreshTreeAmounts(); markDirty(); return;
@@ -2619,11 +2761,32 @@ $("#detail").addEventListener("input", e => {
   if (t.dataset.lf){
     const tr = t.closest("tr"); const l = it.lines[+tr.dataset.li]; if (!l) return;
     const k = t.dataset.lf;
+    if (k === "pf"){ l.pf = t.value; return; }   // se aplica al salir del campo (evento change)
     l[k] = k === "c" ? t.value : k === "bim" ? t.value.trim() : (isBlank(t.value) ? "" : String(parseNum(t.value)));
+    if (k === "c") l.cAuto = false;
+    if (k === "h" && l.pf){ const r = ACERO.lookup(l.pf); l.kgSrc = r && Math.abs(r.kg - parseNum(l.h)) < 0.0005 ? "p" : "m"; t.classList.toggle("kg-man", l.kgSrc === "m"); }
     tr.querySelector(".parc").textContent = m2(lineParcial(l));
+    if (esKg(it) && parseNum(it.incr) > 0){ syncIncr(it); const a = document.querySelector('#measTable tr[data-auto] .parc'); if (a){ const al = it.lines.find(x => x.bim === "AUTO:despuntes"); a.textContent = m2(lineParcial(al)); a.parentElement.querySelector(".al-l").textContent = m2(parseNum(al.l)); } }
     refreshDetailTotals(it); refreshTreeAmounts(); markDirty();
   }
 });
+$("#detail").addEventListener("change", e => {
+  const t = e.target; if (t.dataset.lf !== "pf") return;
+  const f = findItem(sel.item); if (!f) return;
+  const it = f.item, tr = t.closest("tr"), l = it.lines[+tr.dataset.li]; if (!l) return;
+  l.pf = t.value.trim();
+  if (!l.pf){ delete l.kgSrc; markDirty(); return; }
+  const r = ACERO.lookup(l.pf);
+  if (!r){ t.classList.add("pf-bad"); toast(`«${l.pf}» no está en el prontuario: escribe el peso por metro a mano`); markDirty(); return; }
+  l.pf = r.name; l.h = String(r.kg); l.kgSrc = "p";
+  if (!l.c || l.cAuto){ l.c = `${r.name} · ${String(r.kg).replace(".", ",")} ${r.ud}`; l.cAuto = true; }
+  syncIncr(it); refreshTreeAmounts(); markDirty(); renderDetailKeepFocus(null, +tr.dataset.li);
+});
+function renderDetailKeepFocus(field, li){
+  renderDetailInner();
+  const sel2 = field ? `[data-if="${field}"]` : `#measTable tr[data-li="${li}"] [data-lf="l"]`;
+  const el = document.querySelector(sel2); if (el){ el.focus(); if (el.select) el.select(); }
+}
 $("#detail").addEventListener("keydown", e => {
   if (e.key === "Enter" && e.target.dataset.lf){
     e.preventDefault();
@@ -2685,6 +2848,10 @@ $("#fMeas").addEventListener("change", async e => {
     if (text.includes("\ufffd")) text = new TextDecoder("windows-1252").decode(buf);
     const rows = parseMeasFile(text, file.name);
     if (!rows.length) throw new Error("vacío");
+    const unitOf = code => { const f = P.chapters.flatMap(c => c.items).find(i => i.code === code); return (f && f.unit) || (BASE && BASE.map[code] && BASE.map[code].unit) || ""; };
+    let nAcero = 0;
+    rows.forEach(r => { if (/^kg$/i.test(unitOf(r.code)) && isBlank(r.line.h) && aceroAplicar(r.line)){ nAcero++; const lc = r.line.c && ACERO.lookup(r.line.c); if (!r.line.c || (lc && lc.name === r.line.pf)) r.line.c = r.line.pf + " · " + String(r.line.h).replace(".", ",") + " kg/m"; } });
+    if (nAcero) setTimeout(() => toast(`${nAcero} líneas de acero con el peso del prontuario`), 1500);
     const byCode = {}; rows.forEach(r => (byCode[r.code] = byCode[r.code] || []).push(r.line));
     ensureIds(P);
     const st = { upd: 0, add: 0, del: 0, kept: 0, created: 0 }, assigned = [], missing = [], keptList = [];
@@ -2719,7 +2886,7 @@ $("#fMeas").addEventListener("change", async e => {
         else { const l = Object.assign({ id: uid("l") }, nl); it.lines.push(l); seen.add(l.id); st.add++; }
       }
       it.lines = it.lines.filter(l => {
-        if (isBlank(l.bim) || seen.has(l.id)) return true;
+        if (isBlank(l.bim) || /^AUTO:/.test(l.bim) || seen.has(l.id)) return true;
         if (lineCertAt(P, it, l.id) >= 0){ st.kept++; keptList.push(`${code} · Id ${l.bim}`); return true; }
         st.del++; return false;
       });
@@ -2786,6 +2953,7 @@ $("#fRooms").addEventListener("change", async e => {
   if (b && b.map){ BASE = b; buildIndex(); }
   renderAll(); $("#baseBody").innerHTML = ""; renderBase();
   fsInit();
+  $("#aceroList").innerHTML = ACERO.names.map(n => `<option value="${esc(n)}">${esc(String(ACERO.T[n]).replace(".", ","))} ${/^B500|^Ø|^#|^[A-Z]/.test(n) ? "kg/m" : ""}</option>`).join("");
 })();
 </script>
 </body>
