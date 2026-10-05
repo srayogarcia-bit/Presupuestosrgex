@@ -136,6 +136,7 @@ table.meas td.parc{text-align:right; padding-right:8px; white-space:nowrap}
 /* Base */
 .base-tools{padding:10px 14px; display:flex; gap:6px; border-bottom:1px solid var(--line); background:var(--surface)}
 .base-tools input{flex:1; min-width:0; border:1px solid var(--line); border-radius:6px; padding:6px 9px; background:var(--surface)}
+.base-tools.bt2{padding-top:0} .base-tools.bt2 select{flex:1; min-width:0}
 .base-tools select{border:1px solid var(--line); border-radius:6px; padding:5px 6px; background:var(--surface)}
 .res{border-bottom:1px solid var(--line); padding:9px 14px; display:grid; grid-template-columns:1fr auto; gap:3px 10px; cursor:pointer}
 .res:hover{background:var(--surface-2)}
@@ -1085,10 +1086,10 @@ function refreshDetailTotals(it){
 let baseQuery = "", baseFilter = "partidas", openRes = null;
 const fold = s => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 let baseIndex = null;
-let baseCwd = null, baseRoot = null, baseParent = {};
+let baseCwd = null, baseRoot = null, baseParent = {}, baseGroup = "";
 function buildIndex(){
   baseIndex = BASE ? BASE.list.map(k => [k, fold(k + " " + BASE.map[k].summary)]) : null;
-  baseParent = {}; baseRoot = null; baseCwd = null;
+  baseParent = {}; baseRoot = null; baseCwd = null; baseGroup = ""; for (const k in _topMemo) delete _topMemo[k];
   if (!BASE) return;
   for (const k in BASE.map){
     const c = BASE.map[k];
@@ -1096,6 +1097,13 @@ function buildIndex(){
     if (c.isChapter || c.isRoot) for (const d of c.decomp || []) if (!baseParent[d.code]) baseParent[d.code] = k;
   }
   baseCwd = baseRoot;
+}
+const _topMemo = {};
+function baseTop(code){
+  if (_topMemo[code] !== undefined) return _topMemo[code];
+  let k = code, prev = code, g = 0;
+  while (k && baseParent[k] && baseParent[k] !== baseRoot && g++ < 12){ prev = baseParent[k]; k = prev; }
+  return (_topMemo[code] = baseParent[code] ? prev : code);
 }
 function basePath(code){
   const out = []; let k = code, guard = 0;
@@ -1118,26 +1126,36 @@ function renderBase(){
   if (!had){
     box.innerHTML = `<div class="base-tools"><input id="bq" type="search" placeholder="Buscar código o texto" aria-label="Buscar en la base" autocomplete="off">
       <select id="bf" aria-label="Filtro"><option value="partidas">Partidas</option><option value="todo">Todo</option></select></div>
+      <div class="base-tools bt2"><select id="bg" aria-label="Grupo de la base"></select></div>
       <div class="base-meta" id="bmeta"></div><div id="bres"></div>`;
     $("#bq").value = baseQuery; $("#bf").value = baseFilter;
+    const groups = baseRoot ? (BASE.map[baseRoot].decomp || []).map(d => BASE.map[d.code]).filter(c => c && (c.isChapter || c.isRoot)) : [];
+    $("#bg").innerHTML = `<option value="">Todos los grupos</option>` + groups.map(g => `<option value="${esc(g.code)}">${esc(g.code)} · ${esc(g.summary)}</option>`).join("");
+    $("#bg").value = baseGroup;
     $("#bq").addEventListener("input", e => { baseQuery = e.target.value; renderResults(); });
     $("#bf").addEventListener("change", e => { baseFilter = e.target.value; renderResults(); });
+    $("#bg").addEventListener("change", e => {
+      baseGroup = e.target.value;
+      if (!baseQuery.trim()){ baseCwd = baseGroup || baseRoot; }
+      renderResults();
+    });
   }
   renderResults();
 }
 function renderResults(){
   const words = fold(baseQuery).split(/\s+/).filter(Boolean);
-  if (!words.length && baseRoot) return renderBaseTree();
+  if (!words.length && baseRoot){ if (baseGroup && (!baseCwd || baseCwd === baseRoot || baseTop(baseCwd) !== baseGroup)) baseCwd = baseGroup; return renderBaseTree(); }
   const out = [];
   let total = 0;
   for (const [k, hay] of baseIndex){
     const c = BASE.map[k];
     if (baseFilter === "partidas" && !c.isPartida) continue;
+    if (baseGroup && baseTop(k) !== baseGroup) continue;
     if (words.length && !words.every(w => hay.includes(w))) continue;
     total++;
     if (out.length < 150) out.push(c);
   }
-  $("#bmeta").textContent = `${BASE.name} · ${BASE.count.toLocaleString("es-ES")} conceptos` + (words.length ? ` · ${total.toLocaleString("es-ES")} resultados` : "") + (total > 150 ? " (se muestran 150)" : "");
+  $("#bmeta").textContent = `${BASE.name} · ${BASE.count.toLocaleString("es-ES")} conceptos` + (words.length ? ` · ${total.toLocaleString("es-ES")} resultados${baseGroup ? " en " + baseGroup : ""}` : "") + (total > 150 ? " (se muestran 150: elige un grupo o afina la búsqueda)" : "");
   $("#bres").innerHTML = out.length ? out.map(c => {
       const par = baseParent[c.code], pc = par && BASE.map[par];
       return resRow(c) + `<span class="rm">${pc ? `<a href="#" class="rpath" data-act="baseGo" data-code="${esc(par)}" title="Ver dónde está en la base">📁 ${esc(par)} · ${esc(pc.summary)}</a>` : `<span></span>`}<button class="btn small" data-act="addFromBase" data-code="${esc(c.code)}">Añadir</button></span></div>`;
@@ -1293,7 +1311,7 @@ const actions = {
     renderDetail(); refreshTreeAmounts(); markDirty(); toast("Precio recalculado desde la descomposición");
   },
   resToggle(el, e){ if (e.target.closest('[data-act="addFromBase"]') || e.target.closest('[data-act="baseGo"]')) return; openRes = openRes === el.dataset.code ? null : el.dataset.code; renderResults(); },
-  baseGo(el){ baseCwd = el.dataset.code; baseQuery = ""; const q = $("#bq"); if (q) q.value = ""; openRes = null; renderResults(); const r = $("#baseBody"); if (r) r.scrollTop = 0; },
+  baseGo(el){ baseCwd = el.dataset.code; baseGroup = baseCwd === baseRoot ? "" : baseTop(baseCwd); const g = $("#bg"); if (g) g.value = baseGroup; baseQuery = ""; const q = $("#bq"); if (q) q.value = ""; openRes = null; renderResults(); const r = $("#baseBody"); if (r) r.scrollTop = 0; },
   addFromBase(el){
     const c = BASE.map[el.dataset.code]; if (!c) return;
     let auto = null;
