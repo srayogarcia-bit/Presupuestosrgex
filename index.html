@@ -1177,7 +1177,7 @@ function itemDetail(it){
       <td class="w-p parc">${m2(lineParcial(l))}</td><td></td></tr>` : `<tr data-li="${i}">
       <td><input data-lf="c" value="${esc(l.c)}" aria-label="Comentario"></td>
       <td class="w-id"><input data-lf="bim" value="${esc(l.bim || "")}" aria-label="Id del elemento" placeholder="—"></td>
-      ${kg ? `<td class="w-pf"><input data-lf="pf" list="aceroList" value="${esc(l.pf || "")}" placeholder="IPE 120" aria-label="Perfil" class="${l.pf && !ACERO.lookup(l.pf) ? "pf-bad" : ""}"></td>` : ""}
+      ${kg ? `<td class="w-pf"><input data-lf="pf" list="aceroList" value="${esc(l.pf || "")}" placeholder="—" title="Opcional: escribe un perfil (IPE 120, #100x100x5, Ø12…) y se pone su peso por metro" aria-label="Perfil" class="${l.pf && !ACERO.lookup(l.pf) ? "pf-bad" : ""}"></td>` : ""}
       <td class="w-n"><input class="num" data-lf="n" inputmode="decimal" value="${esc(numStr(l.n))}" aria-label="Unidades"></td>
       <td class="w-d"><input class="num" data-lf="l" inputmode="decimal" value="${esc(numStr(l.l))}" aria-label="Largo"></td>
       <td class="w-d"><input class="num" data-lf="a" inputmode="decimal" value="${esc(numStr(l.a))}" aria-label="Ancho"></td>
