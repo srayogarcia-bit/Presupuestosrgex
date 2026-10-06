@@ -220,6 +220,8 @@ tr.auto-row td{color:var(--muted); font-style:italic; font-size:12.5px}
 .row.item.msel{background:var(--sel); box-shadow:inset 3px 0 0 var(--accent)}
 .multi-bar{display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:7px 12px; background:var(--sel); border-bottom:1px solid var(--line); font-size:13px}
 .multi-bar[hidden]{display:none} .multi-bar span{color:var(--muted); margin-right:auto}
+.fam-list{max-height:55vh; overflow:auto; border:1px solid var(--line); border-radius:8px}
+.fam-row{padding:8px 10px; border-bottom:1px solid var(--line); display:grid; gap:4px; font-size:13px}
 .modal .acts{display:flex; gap:8px; justify-content:flex-end; margin-top:16px; flex-wrap:wrap}
 #toast{position:fixed; left:50%; bottom:calc(18px + env(safe-area-inset-bottom,0px)); transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:9px 14px; border-radius:8px; font-size:13px; opacity:0; pointer-events:none; transition:opacity .2s; z-index:30; max-width:90vw}
 #toast.on{opacity:1}
@@ -371,7 +373,7 @@ table.ct tr.tot td{font-weight:600; border-top:1px solid var(--ink)}
   </section>
 
   <section class="pane" id="paneBase" aria-label="Base de precios">
-    <div class="pane-head"><h2 id="baseTitle">Base de precios</h2><button class="btn small presu-only" data-act="loadBase" id="btnBaseSmall">Cargar BC3</button><button class="btn small ghost wide-only" data-act="baseToggle" title="Ocultar este panel (Alt + B)" aria-label="Ocultar panel">✕</button></div>
+    <div class="pane-head"><h2 id="baseTitle">Base de precios</h2><button class="btn small presu-only" data-act="familiasVer" title="Familias de partidas que se eligen por la medida (carpinterías…)">Familias</button><button class="btn small presu-only" data-act="loadBase" id="btnBaseSmall">Cargar BC3</button><button class="btn small ghost wide-only" data-act="baseToggle" title="Ocultar este panel (Alt + B)" aria-label="Ocultar panel">✕</button></div>
     <div id="baseBody" class="scroll"></div>
   </section>
 </main>
@@ -901,6 +903,59 @@ function parseMeasFile(text, name) {
 
 if (typeof module !== "undefined") module.exports = { ensureIds, certQtyOf, itemCert, chapCert, certTotals, lineCertAt, chapOrder, chapTotalDeep, numLetras, docLabels, decodeBC3, parseBC3Text, buildBase, budgetFromParsed, buildBC3, encode1252, totals, itemQty, parseMeasFile, itemFromConcept, newProject, decompRows, lineParcial };
 
+/* ===== Familias de partidas por medida (carpinterías…) =====
+   Agrupa las partidas de la base que solo se diferencian en la medida («2H.120x120cm») o en el tramo
+   de superficie («>1m2<2m2»), y elige la que toca para una medida concreta. */
+const FAM_DIM = /(\d+(?:[.,]\d+)?)\s*[xX×]\s*(\d+(?:[.,]\d+)?)\s*(?:cm\.?|mm\.?)?/;
+const FAM_RANGE = />\s*(\d+(?:[.,]\d+)?)\s*m2?\s*<\s*(\d+(?:[.,]\d+)?)\s*m2?/i;
+function famStem(s){
+  return String(s).toUpperCase()
+    .replace(FAM_RANGE, " ").replace(FAM_DIM, " ")
+    .replace(/\b\d+\s*H\b\.?/g, " ")                       // nº de hojas de ventanas (1H, 2H.): la medida es la total; «2/H» de puertas se conserva
+    .replace(/\b(INF|SUP|LAT)\b\.?/g, " ").replace(/\+\s*/g, "+")
+    .replace(/\bCM\b\.?/g, " ").replace(/[.,]/g, " ").replace(/\s+/g, " ").trim();
+}
+const famNum = s => parseFloat(String(s).replace(",", "."));
+function buildFamilias(base){
+  const G = {};
+  for (const k of base.list){
+    const c = base.map[k]; if (!c || !c.isPartida) continue;
+    const u = String(c.unit || "").toLowerCase(), s = c.summary || "";
+    const r = s.match(FAM_RANGE), d = s.match(FAM_DIM);
+    let e = null;
+    if (r && /m2|m²/.test(u)) e = { code: c.code, unit: u, amin: famNum(r[1]), amax: famNum(r[2]) };
+    else if (d && u === "ud"){
+      let w = famNum(d[1]), h = famNum(d[2]);
+      if (w < 10) w *= 100; if (h < 10) h *= 100;            // «0,825x203 cm» → 82,5 × 203
+      e = { code: c.code, unit: u, w, h };
+    }
+    if (!e) continue;
+    const key = c.code.replace(/\d+$/, "") + "|" + famStem(s);
+    (G[key] = G[key] || []).push(Object.assign(e, { summary: s, price: c.price }));
+  }
+  const out = {};
+  for (const key in G){
+    const L = G[key]; if (L.length < 2) continue;
+    L.sort((a, b) => a.code.localeCompare(b.code, "es", { numeric: true }));
+    const id = "@" + L[0].code;
+    out[id] = { id, label: key.split("|")[1], items: L, nUd: L.filter(x => x.w).length, nM2: L.filter(x => x.amin != null).length };
+  }
+  return out;
+}
+/* Partida de la familia para una medida (en metros): exacta por unidad, o por m² según su tramo */
+function resolverFamilia(fam, wM, hM){
+  if (!fam) return { error: "familia desconocida" };
+  const w = wM * 100, h = hM * 100, A = wM * hM, tol = 1.6;
+  const ud = fam.items.find(x => x.w && Math.abs(x.w - w) <= tol && Math.abs(x.h - h) <= tol);
+  if (ud) return { code: ud.code, unit: "ud", item: ud, como: `medida exacta ${fmtCm(ud.w)}×${fmtCm(ud.h)}` };
+  const m2 = fam.items.find(x => x.amin != null && A > x.amin - 1e-6 && A <= x.amax + 1e-6);
+  if (m2) return { code: m2.code, unit: "m2", item: m2, como: `${String(Math.round(A * 100) / 100).replace(".", ",")} m², tramo >${m2.amin}<${m2.amax} m²` };
+  const tr = fam.items.filter(x => x.amin != null);
+  return { error: tr.length ? `${String(Math.round(A * 100) / 100).replace(".", ",")} m² fuera de los tramos de la base (${tr.map(x => `>${x.amin}<${x.amax}`).join(", ")}): precio nuevo` : `no hay partida de ${fmtCm(w)}×${fmtCm(h)} en la familia` };
+}
+const fmtCm = x => String(Math.round(x * 10) / 10).replace(".", ",");
+
+
 </script>
 <script>
 /* ===== App ===== */
@@ -1165,6 +1220,7 @@ function syncIncr(it){
   if (i >= 0 && i !== it.lines.length - 1){ const [x] = it.lines.splice(i, 1); it.lines.push(x); }
 }
 
+const familias = () => BASE ? (BASE._fams || (BASE._fams = buildFamilias(BASE))) : {};
 /* --- Render: detalle --- */
 function renderDetail(){ renderDetailInner(); updateDetailPos(); if (isMedium() && curTab !== "base") showTab("detail"); }
 function renderDetailInner(){
@@ -1440,6 +1496,21 @@ const actions = {
     catch(e){ console.error(e); toast("No se ha podido generar el PDF"); }
   },
   up(){ move(-1); }, down(){ move(1); },
+  familiasVer(){
+    if (!BASE) return toast("Carga primero la base de precios");
+    const F = familias(), all = Object.values(F);
+    modal("Familias de partidas por medida", `<p class="hint">Partidas de la base que solo cambian por la medida (por unidad, para medidas estándar) o por el tramo de superficie (por m²). En Revit, pon el <b>código de la familia</b> (empieza por @) en SRG_Criterio_Medicion del tipo: al importar, la app elige la partida según el ancho y el alto de cada elemento. ${all.length} familias.</p>
+      <input id="famQ" type="search" placeholder="Buscar: ventana aluminio oscilobatiente, puerta paso lisa…" style="width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);margin-bottom:8px">
+      <div id="famList" class="fam-list"></div>`, [{ label: "Cerrar" }]);
+    const draw = () => {
+      const w = fold($("#famQ").value).split(/\s+/).filter(Boolean);
+      const L = all.filter(f => w.every(t => fold(f.id + " " + f.label).includes(t))).slice(0, 60);
+      $("#famList").innerHTML = L.map(f => `<div class="fam-row"><div><b>${esc(f.id)}</b> <button class="btn small ghost" data-famcopy="${esc(f.id)}">Copiar</button><br><span>${esc(f.label)}</span></div>
+        <div class="hint">${f.items.map(x => x.w ? `${fmtCm(x.w)}×${fmtCm(x.h)} → ${x.code} (ud)` : `>${x.amin}<${x.amax} m² → ${x.code}`).join(" · ")}</div></div>`).join("") || `<div class="empty"><p>Ninguna familia coincide.</p></div>`;
+    };
+    draw(); $("#famQ").addEventListener("input", draw); setTimeout(() => $("#famQ").focus(), 0);
+    $("#famList").onclick = async e => { const b = e.target.closest("[data-famcopy]"); if (!b) return; try { await navigator.clipboard.writeText(b.dataset.famcopy); toast(`${b.dataset.famcopy} copiado`); } catch(err){ toast(b.dataset.famcopy); } };
+  },
   usarProntuario(){ const f = findItem(sel.item); if (!f) return; f.item.useProntuario = true; markDirty(); renderDetailInner(); },
   baseToggle(){
     const off = document.body.classList.toggle("base-off");
@@ -2935,8 +3006,36 @@ $("#fMeas").addEventListener("change", async e => {
     const buf = await readBuf(file);
     let text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
     if (text.includes("\ufffd")) text = new TextDecoder("windows-1252").decode(buf);
-    const rows = parseMeasFile(text, file.name);
+    let rows = parseMeasFile(text, file.name);
     if (!rows.length) throw new Error("vacío");
+    // Familias de partidas (código «@…»): la partida concreta se elige por la medida de cada elemento
+    const famOk = [], famErr = [];
+    if (rows.some(r => /^@/.test(r.code))){
+      const F = familias(), fm = x => String(r2(x)).replace(".", ",");
+      rows = rows.filter(r => {
+        if (!/^@/.test(r.code)) return true;
+        if (!BASE){ famErr.push(`${r.code}: carga la base de precios para elegir la partida`); return false; }
+        const fam = F[r.code], w = parseNum(r.line.a) || parseNum(r.line.l), h = parseNum(r.line.h);
+        if (!fam){ famErr.push(`${r.code}: esa familia no existe en la base cargada`); return false; }
+        if (!(w > 0 && h > 0)){ famErr.push(`${r.code} ${r.line.c || ""}: faltan ancho y alto`); return false; }
+        const res = resolverFamilia(fam, w, h);
+        if (res.error){ famErr.push(`${r.line.c || r.code} (${fm(w)} × ${fm(h)}): ${res.error}`); return false; }
+        r.fam = r.code; r.code = res.code;
+        r.line.c = `${r.line.c ? r.line.c + " · " : ""}${fm(w)} × ${fm(h)} (${res.como})`;
+        if (res.unit === "ud"){ r.line.l = ""; r.line.a = ""; r.line.h = ""; if (isBlank(r.line.n)) r.line.n = "1"; }
+        else { r.line.l = String(w); r.line.a = ""; r.line.h = String(h); }
+        famOk.push(r); return true;
+      });
+      // Si un elemento ha cambiado de medida y de partida, se retira de la partida anterior de su familia
+      for (const r of famOk){
+        if (!r.line.bim) continue;
+        const codes = new Set(F[r.fam].items.map(x => x.code));
+        for (const ch of P.chapters) for (const it of ch.items){
+          if (it.code === r.code || !codes.has(it.code)) continue;
+          it.lines = it.lines.filter(l => l.bim !== r.line.bim || lineCertAt(P, it, l.id) >= 0);
+        }
+      }
+    }
     const unitOf = code => { const f = P.chapters.flatMap(c => c.items).find(i => i.code === code); return (f && f.unit) || (BASE && BASE.map[code] && BASE.map[code].unit) || ""; };
     let nAcero = 0;
     const modoDe = code => { const f = P.chapters.flatMap(c => c.items).find(i => i.code === code); if (f) return aceroModo(f); const b = BASE && BASE.map[code]; return b ? aceroModo({ unit: b.unit, summary: b.summary, text: b.text }) : null; };
@@ -2986,7 +3085,9 @@ $("#fMeas").addEventListener("change", async e => {
     modal("Mediciones sincronizadas", `<p>${assigned.length} partidas: ${st.upd} líneas actualizadas, ${st.add} nuevas y ${st.del} retiradas porque ese elemento ya no viene en el archivo.${st.created ? ` Se han creado ${st.created} partidas desde la base.` : ""}</p>
       <p>Las líneas sin Id (las que metes a mano) no se tocan.</p>
       ${st.kept ? `<p>Se conservan ${st.kept} líneas que ya no vienen del modelo pero están certificadas; revísalas:</p><pre>${esc(keptList.join("\n"))}</pre>` : ""}
-      ${missing.length ? `<p>Estos códigos no están ni en el presupuesto ni en la base cargada:</p><pre>${esc(missing.join("\n"))}</pre>` : ""}`, [{ label: "Hecho", primary: true }]);
+      ${missing.length ? `<p>Estos códigos no están ni en el presupuesto ni en la base cargada:</p><pre>${esc(missing.join("\n"))}</pre>` : ""}
+      ${famOk.length ? `<p>${famOk.length} carpinterías con la partida elegida por su medida (familias de partidas).</p>` : ""}
+      ${famErr.length ? `<p><b>Sin partida en la base</b> (necesitan precio nuevo o revisar la medida):</p><pre>${esc(famErr.join("\n"))}</pre>` : ""}`, [{ label: "Hecho", primary: true }]);
   } catch(err){ toast("No se ha podido leer el archivo de mediciones. Revisa que tenga una columna de código."); }
 });
 
