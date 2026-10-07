@@ -3801,8 +3801,7 @@ async function mvAssign(){
   if (t.nueva){
     const c = BASE && BASE.map[t.code]; if (!c) return toast("Esa partida no está en la base cargada");
     it = itemFromConcept(c, BASE.map, P.concepts);
-    let best = null; for (const ch of P.chapters) if (ch.code && t.code.startsWith(ch.code) && (!best || ch.code.length > best.code.length)) best = ch;
-    (best || P.chapters.find(ch => ch.summary === "Mediciones importadas") || addChapter("Mediciones importadas")).items.push(it);
+    mvDestFor(t.code).items.push(it);
   }
   if (!it.lines.length && parseNum(it.qty)){ it.lines.push({ id: uid("l"), c: "Cantidad anterior", n: "", l: String(parseNum(it.qty)), a: "", h: "", bim: "" }); it.qty = ""; }
   let add = 0, rep = 0, kept = 0; const errs = [];
@@ -3832,6 +3831,30 @@ function mvCardMulti(){
     <div class="mv-assign" id="mvAssign"></div>`;
   mvAssignUI(els); mvPaint();
 }
+/* Precios auxiliares (A: hormigones, morteros…): no son partidas que se midan */
+function mvAux(code){
+  const T = mvBaseTree(); let fam = null;
+  for (let k = T.par[code], g = 0; k && k !== T.root && g < 15; k = T.par[k], g++) fam = k;
+  return !!fam && /auxiliar/i.test((BASE.map[fam] || {}).summary || "");
+}
+/* Capítulo donde va una partida nueva: el del presupuesto con ese código o, si no hay, el capítulo de la base (E07 Cubiertas…) */
+function mvDestFor(code){
+  let best = null; for (const ch of P.chapters) if (ch.code && code.startsWith(ch.code) && (!best || ch.code.length > best.code.length)) best = ch;
+  if (best) return best;
+  const T = BASE ? mvBaseTree() : { par: {} }, path = [];
+  for (let k = T.par[code], g = 0; k && k !== T.root && g < 15; k = T.par[k], g++) path.unshift(k);
+  // capítulo principal de la base: E07, E13… (si no, el segundo nivel)
+  const top = path.find(k => /^[A-Z]\d{2}$/.test(k)) || path[1] || path[0] || null;
+  const pre = top || code.slice(0, 3), bc = BASE && BASE.map[pre];
+  if (bc && (bc.isChapter || top)){
+    const byName = P.chapters.find(c => !c.parentId && fold(c.summary) === fold(bc.summary)); if (byName) return byName;
+    const ch = { id: uid("c"), code: pre, summary: bc.summary, items: [], collapsed: false, parentId: null };
+    const nxt = P.chapters.findIndex(c => !c.parentId && c.code > pre);
+    if (nxt < 0) P.chapters.push(ch); else P.chapters.splice(nxt, 0, ch);
+    return ch;
+  }
+  return P.chapters.find(c => c.summary === "Mediciones importadas") || addChapter("Mediciones importadas");
+}
 /* Elegir partida: lo del presupuesto, buscador en la base y la base navegable por capítulos */
 function mvBaseTree(){
   if (BASE._mvTree) return BASE._mvTree;
@@ -3850,7 +3873,8 @@ function mvPickPartida(q0){
     let h = "";
     if (w.length){
       const mine = items.filter(hit).slice(0, 30);
-      const base = BASE ? BASE.list.map(k => BASE.map[k]).filter(c => c && c.isPartida && hit(c) && !items.some(i => i.code === c.code)).slice(0, 60) : [];
+      const TT = BASE && mvBaseTree();
+      const base = BASE ? BASE.list.map(k => BASE.map[k]).filter(c => c && c.isPartida && TT.par[c.code] && !mvAux(c.code) && hit(c) && !items.some(i => i.code === c.code)).slice(0, 60) : [];
       h = (mine.length ? `<div class="mv-pgrp">En el presupuesto</div>` + mine.map(row).join("") : "")
         + (base.length ? `<div class="mv-pgrp">En la base de precios</div>` + base.map(row).join("") : "")
         + (!mine.length && !base.length ? `<p class="hint">Nada coincide.</p>` : "");
