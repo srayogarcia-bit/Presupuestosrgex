@@ -3518,9 +3518,18 @@ async function mvQto(el){
       if (nm && val && !(nm in q)) q[nm] = +val.value;
     }
   } catch(e){}
-  // Si el IFC no trae cantidades base, se calculan de la geometría del elemento
+  // Revit las llama NominalLength, NominalHeight y NominalWidth
+  for (const k of ["length", "height", "width"]) if (!(k in q) && q["nominal" + k]) q[k] = q["nominal" + k];
+  const fromIfc = Object.keys(q).length > 0;
+  // Lo que el IFC no trae (todo, en las cubiertas de Revit) se calcula de la geometría del elemento
   const g = mvGeomQto(el);
-  for (const k in g) if (!(k in q) && g[k] > 0){ q[k] = g[k]; q._geom = true; }
+  for (const k in g) if (!(k in q) && g[k] > 0) q[k] = g[k];
+  if (!fromIfc) q._geom = true;
+  // Hastiales y muros no rectangulares: Revit da como bruta longitud × altura máxima; la real es la neta más los huecos
+  if (mvIsWall(el) && q.netsidearea && q.grosssidearea){
+    const huecos = (el.holes || []).reduce((s2, h) => s2 + h.w * h.h, 0);
+    if (q.netsidearea + huecos < 0.88 * q.grosssidearea){ q.grosssidearea = Math.round((q.netsidearea + huecos) * 1000) / 1000; q._noRect = true; }
+  }
   return el.q = q;
 }
 /* Cantidades a partir de la malla 3D (coordenadas reales, eje vertical Y):
@@ -3556,7 +3565,11 @@ function mvGeomQto(el){
   }
   const r = x => Math.round(x * 1000) / 1000;
   const q = { length: r(L), width: r(W), height: r(H), grossvolume: r(Math.abs(vol)), netvolume: r(Math.abs(vol)), netarea: r(up), grossarea: r(up), netfloorarea: r(up) };
-  if (mvIsWall(el)){ q.grosssidearea = r(L * H); q.netsidearea = r(side / 2); }
+  if (mvIsWall(el)){
+    // Bruta = neta + huecos alojados: así vale también para hastiales y muros que no son rectangulares
+    const huecos = (el.holes || []).reduce((s2, h) => s2 + h.w * h.h, 0);
+    q.netsidearea = r(side / 2); q.grosssidearea = r(side / 2 + huecos);
+  }
   return q;
 }
 const mvIsWall = el => /^IFC(WALL|WALLSTANDARDCASE|CURTAINWALL|COVERING)$/.test(el.cls);
@@ -3587,7 +3600,9 @@ async function mvLinesFor(el, crit, code){
   if (crit === "bh" || crit === "bh2"){
     const caras = crit === "bh2" ? 2 : 1, thr = rfThreshold(code);
     if (!gross) return { lines: [], err: "sin superficie bruta en el IFC" };
-    if (g("length") && g("height")) line(`${name} · longitud × altura`, caras, g("length"), g("height")); else line(`${name} · superficie bruta`, caras, gross, "");
+    // Longitud × altura solo si el muro es rectangular; si no (hastiales, muros escalonados), su superficie bruta
+    if (g("length") && g("height") && Math.abs(g("length") * g("height") - gross) <= 0.02 * gross) line(`${name} · longitud × altura`, caras, g("length"), g("height"));
+    else line(`${name} · superficie bruta`, caras, gross, "");
     for (const ho of el.holes || []) if (ho.w * ho.h > thr) L.push({ id: uid("l"), c: `  A deducir hueco ${String(ho.w).replace(".", ",")} × ${String(ho.h).replace(".", ",")}`, n: String(-caras), l: f2(ho.w), a: "", h: f2(ho.h), bim: tag + ":H" + ho.tag });
   }
   else if (crit === "neto"){ if (!g("netsidearea")) return { lines: [], err: "sin superficie neta en el IFC" }; line(`${name} · superficie neta`, 1, g("netsidearea"), ""); }
