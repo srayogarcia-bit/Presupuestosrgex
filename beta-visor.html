@@ -3469,20 +3469,20 @@ function mvLink(els){
   }
 }
 function mvCapasHTML(el){
-  const C = el.capas, mm = t => t ? ` <span class="hint">${Math.round(t * 1000)} mm</span>` : "";
+  const C = el.capas, r = t => Math.round(t * 1000), mm = c => c.n > 1 ? ` <span class="hint">${c.n} caras · ${c.e.every(x => r(x) === r(c.e[0])) ? r(c.e[0]) + " mm cada una" : c.e.map(r).join(" + ") + " mm"}</span>` : c.t ? ` <span class="hint">${r(c.t)} mm</span>` : "";
   return `<div class="mv-capas ${C.pend ? "warn" : ""}"><div class="mv-asg-h">${C.pend ? `Ojo: multicapa con ${C.capas.length} capas y medido en ${C.nParts} partida${C.nParts === 1 ? "" : "s"}` : `Multicapa: todas las capas medidas`}</div>
-    ${C.capas.map(c => `<div class="mv-capa"><span>${esc(c.mat)}${mm(c.t)}</span>${c.ack ? `<span class="mv-pill skip">${c.ack === "incl" ? "incluida en otra partida" : "no se mide"}</span> <button class="mv-link2" data-mvcapa="${esc(c.mat)}" data-v="">deshacer</button>`
+    ${C.capas.map(c => `<div class="mv-capa"><span>${esc(c.mat)}${mm(c)}</span>${c.ack ? `<span class="mv-pill skip">${c.ack === "incl" ? "incluida en otra partida" : "no se mide"}</span> <button class="mv-link2" data-mvcapa="${esc(c.mat)}" data-v="">deshacer</button>`
       : c.code && c.code !== "?" ? `<span class="mv-pill ok">${esc(c.code)}</span>` : c.code === "?" ? `<span class="mv-pill ok" title="Hay una partida para ella, aunque no la reconozco por el nombre">medida</span>`
-      : `<span class="mv-pill part">sin partida</span> <button class="mv-link2" data-mvcapa="${esc(c.mat)}" data-v="incl">va incluida</button> <button class="mv-link2" data-mvcapa="${esc(c.mat)}" data-v="no">no se mide</button>`}</div>`).join("")}
-    <p class="hint">«Va incluida» y «no se mide» se aplican a todos los elementos del tipo ${esc(C.tipo)}.</p></div>`;
+      : `<span class="mv-pill part">sin partida</span> <button class="mv-link2" data-mvmedir="${esc(c.mat)}" data-n="${c.n}">medir</button> <button class="mv-link2" data-mvcapa="${esc(c.mat)}" data-v="incl">va incluida</button> <button class="mv-link2" data-mvcapa="${esc(c.mat)}" data-v="no">no se mide</button>`}</div>`).join("")}
+    <p class="hint">«Medir» busca la partida de esa capa en la base. «Va incluida» y «no se mide» se aplican a todos los elementos del tipo ${esc(C.tipo)}.</p></div>`;
 }
 /* ===== Multicapa: ¿están medidas todas las capas? ===== */
 const mvMulti = el => /^IFC(WALL|WALLSTANDARDCASE|SLAB|ROOF|COVERING|CURTAINWALL)$/.test(el.cls) && mvCapasDe(el).length >= 2;
 const mvTipo = el => String(el.name || "").split(":").slice(0, 2).join(":") || el.label;
 function mvCapasDe(el){
   // Una capa por material (el yeso a dos caras es una sola capa a medir)
-  const m = new Map(); for (const c of el.layersRaw || []){ const k = c.mat; m.set(k, (m.get(k) || 0) + c.t); }
-  return [...m].map(([mat, t]) => ({ mat, t }));
+  const m = new Map(); for (const c of el.layersRaw || []){ const k = c.mat, o = m.get(k) || { t: 0, n: 0, e: [] }; o.t += c.t; o.n++; o.e.push(c.t); m.set(k, o); }
+  return [...m].map(([mat, o]) => ({ mat, t: o.t, n: o.n, e: o.e }));
 }
 const MV_SINON = { lhd: "hueco doble|h/d|tabicon|tabique", lhs: "hueco sencillo|h/s|tabique", yeso: "yeso|guarnecido|enlucido", aislamiento: "aislam|poliuretano|poliestireno|lana|xps|eps", mortero: "mortero|recrecido|capa de compresion", solado: "solado|pavimento|gres|baldosa", teja: "teja|cubricion", hormigon: "hormigon|solera|forjado|losa", grava: "grava|encachado|zahorra", enfoscado: "enfoscado" };
 function mvCapas(el){
@@ -3495,7 +3495,7 @@ function mvCapas(el){
     const pats = w.map(x => MV_SINON[x] || x).join("|");
     let hit = null, best = Infinity;
     if (pats){ const re = new RegExp(pats); for (const p of parts){ const tx = fold(p.summary || ""), m = tx.match(re); if (m && m.index < best && !/(sobre|s\/|bajo|con)\s*$/.test(tx.slice(0, m.index))){ best = m.index; hit = p; } } }   // «capa de compresión SOBRE aislamiento» no es la partida del aislamiento
-    return { mat: c.mat, t: c.t, ack: a || "", code: hit ? hit.code : "" };
+    return { mat: c.mat, t: c.t, n: c.n, e: c.e, ack: a || "", code: hit ? hit.code : "" };
   });
   // Capas sin partida reconocida: se dan por cubiertas si hay partidas que no se han asociado a ninguna capa
   const usadas = new Set(capas.filter(c => c.code).map(c => c.code));
@@ -3775,7 +3775,7 @@ function mvAssignUI(els){
   const box = $("#mvAssign"); if (!box) return;
   const it = mvTarget();
   if (!it){ box.innerHTML = `<div class="mv-asg-h">Medir en una partida</div><p class="hint">Selecciona una partida en el árbol o <button class="mv-link2" data-mv="pick">elige una</button>.</p>`; return; }
-  const cr = mvCriterios(it.unit, els), last = (MV.crit || {})[it.code], cur = cr.some(c => c[0] === last) ? last : cr[0][0];
+  const cr = mvCriterios(it.unit, els), last = (MV.crit || {})[it.code] || (MV.capaCaras > 1 && els.every(mvIsWall) ? "bh2" : ""), cur = cr.some(c => c[0] === last) ? last : cr[0][0];
   box.innerHTML = `<div class="mv-asg-h">Medir en <span class="code">${esc(it.code)}</span> <span class="hint">${esc(it.unit || "")}</span> <button class="mv-link2" data-mv="pick">cambiar</button></div>
     <div class="hint mv-asg-s">${esc(it.summary || "")}${it.nueva ? " · se añadirá desde la base" : ""}</div>
     <select id="mvCrit" aria-label="Criterio de medición">${cr.map(([k, t]) => `<option value="${k}" ${k === cur ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>
@@ -3820,7 +3820,7 @@ async function mvAssign(){
   if (MV_POP) mvS().select(it.id, []); else { mvShowInTree(it.id, []); renderAll(); }
   toast(`${add} elemento${add === 1 ? "" : "s"} medido${add === 1 ? "" : "s"} en ${it.code}${rep ? ` (${rep} actualizado${rep === 1 ? "" : "s"})` : ""}${kept ? ` · ${kept} líneas certificadas se mantienen` : ""}`);
   if (errs.length) setTimeout(() => toast("No medidos: " + errs.join(" · ")), 2700);
-  MV.MULTI.clear(); setTimeout(() => { mvRefresh(); if (els[0]) mvPick(els[0]); }, 50);
+  MV.MULTI.clear(); MV.capaCaras = 0; setTimeout(() => { mvRefresh(); if (els[0]) mvPick(els[0]); }, 50);
 }
 function mvCardMulti(){
   const els = [...MV.MULTI];
@@ -3839,7 +3839,7 @@ function mvBaseTree(){
   for (const k in BASE.map){ const c = BASE.map[k]; if (c.isRoot && !root) root = k; if (c.isChapter || c.isRoot) for (const d of c.decomp || []) if (!par[d.code]) par[d.code] = k; }
   return BASE._mvTree = { root, par };
 }
-function mvPickPartida(){
+function mvPickPartida(q0){
   const items = P.chapters.flatMap(c => c.items);
   const row = c => `<button class="mv-part" data-mvtc="${esc(c.code)}"><span class="code">${esc(c.code)}</span> ${esc(c.summary || "")}<em>${esc(c.unit || "")}</em></button>`;
   let cwd = null;
@@ -3867,6 +3867,7 @@ function mvPickPartida(){
     }
     $("#mvPl").innerHTML = h;
   };
+  if (q0) $("#mvPq").value = q0;
   draw(); $("#mvPq").addEventListener("input", draw); setTimeout(() => $("#mvPq").focus(), 0);
   $("#mvPl").onclick = e => {
     const ch = e.target.closest("[data-mvch]"); if (ch){ cwd = MV.pickCwd = ch.dataset.mvch; draw(); $("#mvPl").scrollTop = 0; return; }
@@ -3920,7 +3921,7 @@ document.addEventListener("click", e => {
   const b = e.target.closest("[data-mv]"); if (!b) return;
   const st = mvState(), act = b.dataset.mv;
   if (act === "close"){ MV.MULTI.clear(); mvPick(null); }
-  else if (act === "pick") mvPickPartida();
+  else if (act === "pick"){ MV.capaCaras = 0; mvPickPartida(); }
   else if (act === "revisar") mvRevisar();
   else if (act === "popout") mvPopout();
   else if (act === "bringback"){ if (MV.win && !MV.win.closed) MV.win.close(); MV.win = null; mvTab("modelo"); }
@@ -3943,6 +3944,12 @@ document.addEventListener("click", e => {
   const st = mvState(); st.capas = st.capas || {}; const k = mvTipo(MV.SEL) + "|" + b.dataset.mvcapa;
   if (b.dataset.v) st.capas[k] = b.dataset.v; else delete st.capas[k];
   markDirty(); const el = MV.SEL; mvRefresh(); mvPick(el);
+});
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-mvmedir]"); if (!b || !MV.SEL) return;
+  const w = fold(b.dataset.mvmedir).split(/[^a-z]+/).filter(x => x.length >= 3);
+  const q = { yeso: "guarnecido yeso", lhd: "tabicon", lhs: "tabique", aislamiento: "aislamiento", enfoscado: "enfoscado", mortero: "mortero", teja: "teja", solado: "solado" }[w[0]] || w[0] || "";
+  MV.capaCaras = +b.dataset.n || 1; MV.targetCode = null; mvPickPartida(q);
 });
 document.addEventListener("click", e => { const b = e.target.closest("[data-mvel]"); if (!b) return; const el = MV.ELEMS.find(x => x.eid === +b.dataset.mvel); if (el){ mvPick(el); mvFit([el]); } });
 $("#mvFile").addEventListener("change", e => { const f = e.target.files[0]; if (!f) return; mvState()[MV.cur === "act" ? "ifcAct" : "ifc"] = f.name; markDirty(); mvLibs().then(() => mvLoadIfc(f)); e.target.value = ""; });
