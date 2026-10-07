@@ -3624,10 +3624,12 @@ function mvPickPartida(){
   const draw = () => {
     const w = fold($("#mvPq").value).split(/\s+/).filter(Boolean), hit = c => w.every(t => fold(c.code + " " + (c.summary || "")).includes(t));
     const mine = items.filter(hit).slice(0, 30);
-    const base = BASE && w.length ? BASE.list.map(k => BASE.map[k]).filter(c => c && c.isPartida && hit(c) && !items.some(i => i.code === c.code)).slice(0, 30) : [];
+    const base = BASE && w.length ? BASE.list.map(k => BASE.map[k]).filter(c => c && c.isPartida && hit(c) && !items.some(i => i.code === c.code)).slice(0, 40) : [];
     $("#mvPl").innerHTML = (mine.length ? `<div class="mv-pgrp">En el presupuesto</div>` + mine.map(i => `<button class="mv-part" data-mvtc="${esc(i.code)}"><span class="code">${esc(i.code)}</span> ${esc(i.summary || "")}<em>${esc(i.unit || "")}</em></button>`).join("") : "")
       + (base.length ? `<div class="mv-pgrp">En la base de precios</div>` + base.map(c => `<button class="mv-part" data-mvtc="${esc(c.code)}"><span class="code">${esc(c.code)}</span> ${esc(c.summary || "")}<em>${esc(c.unit || "")}</em></button>`).join("") : "")
-      || `<p class="hint">${w.length ? "Nada coincide." : "Escribe para buscar también en la base de precios."}</p>`;
+      || `<p class="hint">${w.length ? "Nada coincide." : ""}</p>`;
+    // Siempre se dice dónde se está buscando, para que no parezca que solo existen las del presupuesto
+    $("#mvPl").insertAdjacentHTML("afterbegin", `<p class="hint" style="margin:0 0 4px">${!BASE ? "Carga la base de precios para buscar también en ella." : w.length ? "Buscando en el presupuesto y en la base de precios." : `Escribe para buscar también entre las ${(BASE._nPart || (BASE._nPart = BASE.list.filter(k => BASE.map[k] && BASE.map[k].isPartida).length)).toLocaleString("es-ES")} partidas de la base de precios.`}</p>`);
   };
   draw(); $("#mvPq").addEventListener("input", draw); setTimeout(() => $("#mvPq").focus(), 0);
   $("#mvPl").onclick = e => { const b = e.target.closest("[data-mvtc]"); if (!b) return; MV.targetCode = b.dataset.mvtc; $("#modalRoot").innerHTML = ""; mvAssignUI(MV.MULTI.size ? [...MV.MULTI] : MV.SEL ? [MV.SEL] : []); };
@@ -3719,11 +3721,13 @@ $("#mvView").addEventListener("drop", e => { e.preventDefault(); const f = [...e
 
 /* ===== Dos pantallas: el modelo en una ventana aparte, conectada en vivo con esta ===== */
 function mvPopout(){
+  if (window.self !== window.top) return toast("Desde claude.ai no se puede abrir el modelo en otra ventana. Usa la app publicada en GitHub (beta-visor.html).");
   const w = window.open(location.pathname + location.search + "#modelo", "srgex-modelo", "width=1300,height=850");
   if (!w) return toast("El navegador ha bloqueado la ventana nueva: permite las ventanas emergentes para esta página");
   MV.win = w; MV.winOk = false; mvTab("base");
   toast("Modelo abierto en otra ventana: llévala a la segunda pantalla");
-  setTimeout(() => { if (MV.win && !MV.winOk) toast("La ventana del modelo no ha podido conectarse con el presupuesto. Ábrela desde la app en GitHub, no desde claude.ai ni desde el archivo del disco."); }, 6000);
+  // Si la ventana no llega a conectarse, se da por perdida y el modelo vuelve a esta ventana
+  setTimeout(() => { if (MV.win && !MV.winOk){ try { MV.win.close(); } catch(e){} MV.win = null; mvTab("modelo"); toast("La ventana del modelo no ha podido conectarse con el presupuesto: el modelo sigue aquí. Ábrela desde la app en GitHub."); } }, 6000);
 }
 if (location.hash === "#modelo" && !MV_POP){
   let ok = false; try { ok = !!(window.opener && window.opener.__srg); } catch(e){}
@@ -3742,6 +3746,8 @@ if (!MV_POP){
     popupClosed(){ MV.win = null; if (document.body.classList.contains("mv-on")) mvTab("modelo"); }
   };
   window.addEventListener("beforeunload", () => { try { if (MV.win && !MV.win.closed) MV.win.close(); } catch(e){} });
+  // Dentro de claude.ai (la app va en un marco) no se ofrece la ventana aparte
+  if (window.self !== window.top) document.querySelectorAll('[data-mv="popout"]').forEach(b => b.hidden = true);
   setInterval(() => { if (MV.win && MV.win.closed){ MV.win = null; if (document.body.classList.contains("mv-on")) mvTab("modelo"); } }, 1500);
 } else {
   /* Esta es la ventana del modelo: usa el presupuesto de la ventana principal */
