@@ -307,9 +307,9 @@ table.ct tr.tot td{font-weight:600; border-top:1px solid var(--ink)}
 @media (prefers-reduced-motion: reduce){ #toast{transition:none} }
 
 /* ===== Visor del modelo (beta) ===== */
-:root{ --mv-ok:#2F7A4F; --mv-bad:#B4362A; --mv-skip:#9AA4A8; --mv-hl:#D98A12; --mv-view:#E1E7E4 }
-@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --mv-ok:#5DB886; --mv-bad:#E07466; --mv-skip:#6C7874; --mv-hl:#F0B252; --mv-view:#141B19 } }
-:root[data-theme="dark"]{ --mv-ok:#5DB886; --mv-bad:#E07466; --mv-skip:#6C7874; --mv-hl:#F0B252; --mv-view:#141B19 }
+:root{ --mv-part:#C98A00; --mv-ok:#2F7A4F; --mv-bad:#B4362A; --mv-skip:#9AA4A8; --mv-hl:#D98A12; --mv-view:#E1E7E4 }
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --mv-part:#E6B54A; --mv-ok:#5DB886; --mv-bad:#E07466; --mv-skip:#6C7874; --mv-hl:#F0B252; --mv-view:#141B19 } }
+:root[data-theme="dark"]{ --mv-part:#E6B54A; --mv-ok:#5DB886; --mv-bad:#E07466; --mv-skip:#6C7874; --mv-hl:#F0B252; --mv-view:#141B19 }
 .pb-tabs{display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden}
 .pb-tabs button{border:0; background:var(--surface); padding:3px 10px; font-size:12.5px; color:var(--muted)}
 .pb-tabs button[aria-selected="true"]{background:var(--sel); color:var(--ink); font-weight:600}
@@ -365,6 +365,15 @@ body.mv-popup #paneBase{display:flex !important}
 .mv-chap{background:var(--surface)} .mv-pdet summary{cursor:pointer}
 .mv-geo{color:var(--warn)}
 .mv-msel{padding:4px 7px; border:1px solid var(--line); border-radius:6px; background:var(--surface); font-size:12.5px; max-width:230px}
+.mv-rev{border:1px solid var(--line); border-radius:8px; padding:6px 10px; display:grid; gap:4px}
+.mv-rev summary{cursor:pointer; display:flex; gap:8px; align-items:center; font-size:13px}
+.mv-rev.bad{border-left:3px solid var(--mv-bad)} .mv-rev.warn{border-left:3px solid var(--warn)}
+.mv-rev-sum{margin:0 0 8px; font-size:13.5px} .mv-rev-sum.ok{color:var(--mv-ok); font-weight:600}
+.mv-pill.part{color:var(--mv-part); border:1px solid var(--mv-part)}
+.mv-capas{display:grid; gap:4px; border-top:1px solid var(--line); padding-top:8px}
+.mv-capas.warn .mv-asg-h{color:var(--mv-part)}
+.mv-capa{display:flex; flex-wrap:wrap; gap:4px 8px; align-items:center; font-size:12.5px} .mv-capa > span:first-child{margin-right:auto}
+.mv-link.mv-link-part{color:var(--mv-part)}
 td.idc{cursor:pointer; text-decoration:underline dotted; text-underline-offset:3px}
 tr.mv-flash td{background:var(--warn-bg) !important; transition:background .3s}
 @media (prefers-reduced-motion: reduce){ tr.mv-flash td{transition:none} }
@@ -441,7 +450,8 @@ tr.mv-flash td{background:var(--warn-bg) !important; transition:background .3s}
     <div id="mvBody" hidden>
       <div class="mv-bar">
         <select id="mvModelSel" class="mv-msel" aria-label="Modelo"><option value="proj">Proyectado</option><option value="act">Estado actual</option><option value="demo">Demoliciones</option></select>
-        <label class="btn small" for="mvFile">Abrir IFC</label><input type="file" id="mvFile" accept=".ifc" hidden>
+        <label class="btn small" for="mvFile">Abrir IFC</label>
+        <button class="btn small primary" data-mv="revisar" title="Lista lo que queda sin medir o sin decidir en el proyectado y en las demoliciones">✓ Revisar</button><input type="file" id="mvFile" accept=".ifc" hidden>
         <button class="btn small" id="mvLayersBtn" aria-expanded="false">Capas ▾</button>
         <label class="mv-chk"><input type="checkbox" id="mvGhost"> Solo lo seleccionado</label>
         <button class="btn small ghost" data-mv="fit">Encuadrar</button>
@@ -450,7 +460,7 @@ tr.mv-flash td{background:var(--warn-bg) !important; transition:background .3s}
       </div>
       <div class="mv-sum" id="mvSum"></div>
       <div class="mv-view" id="mvView"><canvas id="mvCanvas"></canvas><div class="mv-layers" id="mvLayers" hidden></div><div class="mv-msg" id="mvMsg"></div>
-        <div class="mv-legend"><span><i style="background:var(--mv-ok)"></i>Medido</span><span><i style="background:var(--mv-bad)"></i>Sin medir</span><span><i style="background:var(--mv-skip)"></i>No se mide</span><span><i style="background:var(--mv-hl)"></i>Seleccionado</span></div>
+        <div class="mv-legend"><span><i style="background:var(--mv-ok)"></i>Medido</span><span><i style="background:var(--mv-part)"></i>Capas sin medir</span><span><i style="background:var(--mv-bad)"></i>Sin medir</span><span><i style="background:var(--mv-skip)"></i>No se mide</span><span><i style="background:var(--mv-hl)"></i>Seleccionado</span></div>
         <div class="mv-card" id="mvCard" hidden></div>
       </div>
     </div>
@@ -3371,6 +3381,15 @@ async function mvLoadIfc(file){
     } } catch(e){}
     for (const el of byEid.values()) if (el.cls === "IFCBUILDINGSTOREY") for (let i = 0; i < rels.size(); i++){ const r = ifc.GetLine(id, rels.get(i)); if (r.RelatingObject.value === el.eid) for (const o of r.RelatedObjects || []){ const ch = getEl(o.value); if (!ch.storey) ch.storey = el.name || el.longName; } }
     for (const el of byEid.values()) if (!el.storey && el.parentEid) el.storey = (byEid.get(el.parentEid) || {}).storey;
+    // Composición por capas (muros, suelos, cubiertas…): material y espesor de cada capa
+    try { const mr = ifc.GetLineIDsWithType(id, WebIFC.IFCRELASSOCIATESMATERIAL); for (let i = 0; i < mr.size(); i++){
+      const r = ifc.GetLine(id, mr.get(i)); let m = ifc.GetLine(id, r.RelatingMaterial.value);
+      if (m && m.ForLayerSet) m = ifc.GetLine(id, m.ForLayerSet.value);
+      if (!m || !m.MaterialLayers) continue;
+      const capas = [];
+      for (const lr of m.MaterialLayers){ const ly = ifc.GetLine(id, lr.value); const mat = ly.Material ? ifc.GetLine(id, ly.Material.value) : null; capas.push({ mat: String(v(mat && mat.Name) || "Sin material"), t: +v(ly.LayerThickness) || 0 }); }
+      for (const o of r.RelatedObjects || []) getEl(o.value).layersRaw = capas;
+    } } catch(e){}
     // Fases de Revit (conjunto «Proceso por fases»): de qué fase es cada elemento y si se derriba
     try { const pr = ifc.GetLineIDsWithType(id, WebIFC.IFCRELDEFINESBYPROPERTIES); for (let i = 0; i < pr.size(); i++){
       const r = ifc.GetLine(id, pr.get(i)); const pd = ifc.GetLine(id, r.RelatingPropertyDefinition.value);
@@ -3436,22 +3455,60 @@ function mvTagsOf(el){
   }
   return [el.tag, el.parentTag].filter(t => t && MV.byTag[t]);
 }
-function mvLink(){
+function mvLink(els){
   mvIndex();
   const st = mvState(), skip = new Set(st.skip), hide = new Set(st.hide);
-  for (const el of MV.ELEMS){
+  for (const el of els || MV.ELEMS){
     el.tags = mvTagsOf(el);
     el.refs = el.tags.flatMap(t => MV.byTag[t] || []);
     el.measurable = !!MV_CLASES[el.cls];
     el.hidden = hide.has(mvKeyOf(el));
     el.state = !el.measurable || skip.has(mvKeyOf(el)) ? "skip" : el.refs.length ? "ok" : "bad";
+    el.capas = null;
+    if (el.state === "ok" && !el.faseD && mvMulti(el)){ el.capas = mvCapas(el); if (el.capas.pend) el.state = "part"; }
   }
+}
+function mvCapasHTML(el){
+  const C = el.capas, mm = t => t ? ` <span class="hint">${Math.round(t * 1000)} mm</span>` : "";
+  return `<div class="mv-capas ${C.pend ? "warn" : ""}"><div class="mv-asg-h">${C.pend ? `Ojo: multicapa con ${C.capas.length} capas y medido en ${C.nParts} partida${C.nParts === 1 ? "" : "s"}` : `Multicapa: todas las capas medidas`}</div>
+    ${C.capas.map(c => `<div class="mv-capa"><span>${esc(c.mat)}${mm(c.t)}</span>${c.ack ? `<span class="mv-pill skip">${c.ack === "incl" ? "incluida en otra partida" : "no se mide"}</span> <button class="mv-link2" data-mvcapa="${esc(c.mat)}" data-v="">deshacer</button>`
+      : c.code && c.code !== "?" ? `<span class="mv-pill ok">${esc(c.code)}</span>` : c.code === "?" ? `<span class="mv-pill ok" title="Hay una partida para ella, aunque no la reconozco por el nombre">medida</span>`
+      : `<span class="mv-pill part">sin partida</span> <button class="mv-link2" data-mvcapa="${esc(c.mat)}" data-v="incl">va incluida</button> <button class="mv-link2" data-mvcapa="${esc(c.mat)}" data-v="no">no se mide</button>`}</div>`).join("")}
+    <p class="hint">«Va incluida» y «no se mide» se aplican a todos los elementos del tipo ${esc(C.tipo)}.</p></div>`;
+}
+/* ===== Multicapa: ¿están medidas todas las capas? ===== */
+const mvMulti = el => /^IFC(WALL|WALLSTANDARDCASE|SLAB|ROOF|COVERING|CURTAINWALL)$/.test(el.cls) && mvCapasDe(el).length >= 2;
+const mvTipo = el => String(el.name || "").split(":").slice(0, 2).join(":") || el.label;
+function mvCapasDe(el){
+  // Una capa por material (el yeso a dos caras es una sola capa a medir)
+  const m = new Map(); for (const c of el.layersRaw || []){ const k = c.mat; m.set(k, (m.get(k) || 0) + c.t); }
+  return [...m].map(([mat, t]) => ({ mat, t }));
+}
+const MV_SINON = { lhd: "hueco doble|h/d|tabicon|tabique", lhs: "hueco sencillo|h/s|tabique", yeso: "yeso|guarnecido|enlucido", aislamiento: "aislam|poliuretano|poliestireno|lana|xps|eps", mortero: "mortero|recrecido|capa de compresion", solado: "solado|pavimento|gres|baldosa", teja: "teja|cubricion", hormigon: "hormigon|solera|forjado|losa", grava: "grava|encachado|zahorra", enfoscado: "enfoscado" };
+function mvCapas(el){
+  const ack = mvState().capas || {}, tipo = mvTipo(el);
+  const parts = [...new Map(el.refs.map(r => [r.item.code, r.item])).values()];
+  const capas = mvCapasDe(el).map(c => {
+    const a = ack[tipo + "|" + c.mat];
+    // «Yeso1», «LHD1»: fuera números; se elige la partida donde el material aparece antes en el resumen
+    const w = fold(c.mat).split(/[^a-z]+/).filter(x => x.length >= 3);
+    const pats = w.map(x => MV_SINON[x] || x).join("|");
+    let hit = null, best = Infinity;
+    if (pats){ const re = new RegExp(pats); for (const p of parts){ const tx = fold(p.summary || ""), m = tx.match(re); if (m && m.index < best && !/(sobre|s\/|bajo|con)\s*$/.test(tx.slice(0, m.index))){ best = m.index; hit = p; } } }   // «capa de compresión SOBRE aislamiento» no es la partida del aislamiento
+    return { mat: c.mat, t: c.t, ack: a || "", code: hit ? hit.code : "" };
+  });
+  // Capas sin partida reconocida: se dan por cubiertas si hay partidas que no se han asociado a ninguna capa
+  const usadas = new Set(capas.filter(c => c.code).map(c => c.code));
+  let libres = parts.filter(p => !usadas.has(p.code)).length;
+  for (const c of capas) if (!c.code && !c.ack && libres > 0){ c.code = "?"; libres--; }
+  const pend = capas.filter(c => !c.code && !c.ack).length;
+  return { capas, pend, tipo, nParts: parts.length };
 }
 const mvCss = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 function mvPaint(){
   if (!MV.loaded) return;
   const ghost = $("#mvGhost").checked, Ly = MV.layers || { cat: {}, lvl: {}, st: {} };
-  const col = { ok: new THREE.Color(mvCss("--mv-ok")), bad: new THREE.Color(mvCss("--mv-bad")), skip: new THREE.Color(mvCss("--mv-skip")), hl: new THREE.Color(mvCss("--mv-hl")) };
+  const col = { part: new THREE.Color(mvCss("--mv-part")), ok: new THREE.Color(mvCss("--mv-ok")), bad: new THREE.Color(mvCss("--mv-bad")), skip: new THREE.Color(mvCss("--mv-skip")), hl: new THREE.Color(mvCss("--mv-hl")) };
   const focus = MV.FOCUS;
   for (const el of MV.ELEMS){
     const isSp = el.cls === "IFCSPACE";
@@ -3470,12 +3527,14 @@ function mvRefresh(){
   if (!MV.loaded){ $("#mvSum").innerHTML = ""; return; }
   mvLink();
   let ok = 0, bad = 0; const by = {};
-  for (const el of MV.ELEMS){ if (!el.measurable || el.hidden || (MV.view === "demo" && !el.faseD)) continue; const b = by[el.label] = by[el.label] || { ok: 0, bad: 0 }; if (el.state === "ok"){ ok++; b.ok++; } else if (el.state === "bad"){ bad++; b.bad++; } }
+  for (const el of MV.ELEMS){ if (!el.measurable || el.hidden || (MV.view === "demo" && !el.faseD)) continue; const b = by[el.label] = by[el.label] || { ok: 0, bad: 0 }; if (el.state === "ok" || el.state === "part"){ ok++; b.ok++; } else if (el.state === "bad"){ bad++; b.bad++; } }
+  const nPart = MV.ELEMS.filter(el => el.state === "part" && !el.hidden && (MV.view !== "demo" || el.faseD)).length;
   const faltan = Object.entries(by).filter(([, v]) => v.bad).sort((a, b) => b[1].bad - a[1].bad).map(([k, v]) => `${esc(k)} ${v.bad}`).join(" · ");
   const nh = MV.ELEMS.filter(e => e.hidden).length;
   if (MV.layers) mvDrawLayers();
   $("#mvSum").innerHTML = `<span class="mv-file" title="${esc(MV.fileName)}">${esc(MV.fileName)}</span>
     <span><b>${ok}</b> de ${ok + bad} medidos</span>${bad ? `<button class="mv-link" data-mv="sinmedir">Sin medir: ${faltan}</button>` : `<span class="mv-okmsg">Todo medido</span>`}
+    ${nPart ? `<button class="mv-link mv-link-part" data-mv="revisar">Multicapa con capas sin medir: ${nPart}</button>` : ""}
     ${nh ? `<button class="mv-link" data-mv="unhide">Mostrar ${nh} quitados</button>` : ""}`;
   mvPaint();
 }
@@ -3490,9 +3549,57 @@ function mvDrawLayers(){
   const cnt = k => { const m = {}; MV.ELEMS.forEach(e => { if (!e.hidden && (MV.view !== "demo" || e.faseD)) m[k(e)] = (m[k(e)] || 0) + 1; }); return m; };
   const cats = cnt(e => e.label), lvls = cnt(e => e.storey || "—"), sts = cnt(e => e.state || "bad"), fases = cnt(e => e.fase || "Sin fase"), L = MV.layers; L.fase = L.fase || {};
   const grp = (title, key, map, names) => `<div class="mv-lg"><div class="mv-lgh"><span>${title}</span><button class="mv-link2" data-mvlall="${key}">todo</button><button class="mv-link2" data-mvlnone="${key}">nada</button></div>${Object.keys(map).sort((a, b) => (names ? 0 : a.localeCompare(b, "es"))).map(k => `<label><input type="checkbox" data-mvl="${key}" data-mvk="${esc(k)}" ${L[key][k] !== false ? "checked" : ""}> ${esc(names ? names[k] || k : k)} <em>${map[k]}</em></label>`).join("")}</div>`;
-  box.innerHTML = grp("Elementos", "cat", cats) + (Object.keys(lvls).length > 1 ? grp("Plantas", "lvl", lvls) : "") + (MV.view !== "demo" && Object.keys(fases).length > 1 ? grp("Fase", "fase", fases) : "") + grp("Estado", "st", sts, { ok: "Medido", bad: "Sin medir", skip: "No se mide" });
+  box.innerHTML = grp("Elementos", "cat", cats) + (Object.keys(lvls).length > 1 ? grp("Plantas", "lvl", lvls) : "") + (MV.view !== "demo" && Object.keys(fases).length > 1 ? grp("Fase", "fase", fases) : "") + grp("Estado", "st", sts, { ok: "Medido", part: "Capas sin medir", bad: "Sin medir", skip: "No se mide" });
 }
 function mvSaveLayers(){ mvState().layers = MV.layers; markDirty(); mvPaint(); }
+/* ===== Revisión: qué queda sin procesar en cada modelo ===== */
+const mvEsNuevo = el => /02|proyect|nuev/i.test(el.faseC || "");
+const mvEsExist = el => /01|actual|exist/i.test(el.faseC || "") && !el.faseD;
+async function mvRevisar(){
+  Object.assign(MV.slots[MV.cur], { ELEMS: MV.ELEMS, modelID: MV.modelID, loaded: MV.loaded, fileName: MV.fileName, file: MV.file });
+  const pj = MV.slots.proj, ac = MV.slots.act;
+  if (pj.loaded) mvLink(pj.ELEMS); if (ac.loaded) mvLink(ac.ELEMS);
+  const vis = e => !e.hidden && e.measurable;
+  const grupos = [];
+  const add = (key, titulo, ayuda, view, els, tono) => { if (els.length) grupos.push({ key, titulo, ayuda, view, els, tono }); };
+  const isDemoCode = c => /^E01/i.test(c);
+  if (pj.loaded){
+    const P1 = pj.ELEMS.filter(vis);
+    add("nuevo", "Obra nueva sin medir", "Elementos nuevos (fase 02) que no están en ninguna partida.", "proj", P1.filter(e => e.state === "bad" && mvEsNuevo(e) && e.cls !== "IFCSPACE"), "bad");
+    add("est", "Estancias sin acabados", "Estancias del proyectado sin ninguna línea de solado, revestimiento o pintura.", "proj", P1.filter(e => e.state === "bad" && e.cls === "IFCSPACE"), "bad");
+    add("exist", "Existentes sin medir", "Elementos que se mantienen y no están en ninguna partida. Si no llevan obra, márcalos «No se mide» para que no salgan aquí.", "proj", P1.filter(e => e.state === "bad" && mvEsExist(e) && e.cls !== "IFCSPACE"), "warn");
+    add("sinfase", "Sin fase conocida", "El IFC no dice de qué fase son: revísalos uno a uno.", "proj", P1.filter(e => e.state === "bad" && !e.faseC && e.cls !== "IFCSPACE"), "warn");
+    add("nuevoE01", "Obra nueva medida como demolición", "Elementos nuevos que solo están en partidas de demoliciones (E01).", "proj", P1.filter(e => mvEsNuevo(e) && e.refs.length && e.refs.every(r => isDemoCode(r.item.code))), "warn");
+  }
+  if (ac.loaded){
+    const A1 = ac.ELEMS.filter(e => vis(e) && e.faseD);
+    add("demo", "Demoliciones sin medir", "Elementos que se derriban y no están en ninguna partida.", "demo", A1.filter(e => e.state === "bad"), "bad");
+    add("demoNoE01", "Demolición medida fuera de E01", "Elementos que se derriban pero solo aparecen en partidas que no son de demoliciones.", "demo", A1.filter(e => e.refs.length && !e.refs.some(r => isDemoCode(r.item.code))), "warn");
+  }
+  // Líneas del presupuesto cuyo elemento no está en ningún modelo cargado
+  const enModelo = new Set([...(pj.ELEMS || []), ...(ac.ELEMS || [])].flatMap(e => [e.tag, e.parentTag, ...(e.tags || [])]).filter(Boolean));
+  const huerfanas = Object.entries(MV.byTag).filter(([t]) => !/^N:/.test(t) && !enModelo.has(t)).map(([t, rs]) => ({ t, rs }));
+  const tot = grupos.reduce((n, g) => n + g.els.length, 0);
+  const nota = !pj.loaded || !ac.loaded ? `<p class="hint">${!pj.loaded ? "Falta el IFC del proyectado. " : ""}${!ac.loaded ? "Falta el IFC del estado actual: sin él no se revisan las demoliciones." : ""}</p>` : "";
+  const row = (g, e) => `<button class="mv-part" data-mvjump="${g.view}|${e.eid}">${esc(e.label)} <span class="hint">${esc(e.longName || e.name)}</span>${g.capas && e.capas ? `<br><span class="mv-err">Sin partida: ${esc(e.capas.capas.filter(c => !c.code && !c.ack).map(c => c.mat).join(", "))}</span>` : ""}<em>${esc(e.tag || "")}</em></button>`;
+  const partEls = [];
+  if (pj.loaded) partEls.push(...pj.ELEMS.filter(e => vis(e) && e.state === "part").map(e => ["proj", e]));
+  if (partEls.length) grupos.splice(1, 0, { key: "multi", titulo: "Multicapa con capas sin medir", ayuda: "Medidos, pero alguna capa no está en ninguna partida. Ábrelos para ver cuál, o marca la capa como incluida en otra partida.", view: "proj", els: partEls.map(x => x[1]), tono: "warn", capas: true });
+  modal("Revisión: qué queda sin medir", `${nota}
+    <p class="mv-rev-sum ${tot || huerfanas.length ? "" : "ok"}">${tot || huerfanas.length ? `<b>${tot}</b> elementos sin medir o con capas sin medir${huerfanas.length ? ` · <b>${huerfanas.length}</b> Id del presupuesto sin elemento en los modelos` : ""}` : "Todo medido: cada elemento está medido, con todas sus capas, o marcado «No se mide»."}</p>
+    <div class="mv-plist">${grupos.map(g => `<details class="mv-rev ${g.tono}" ${g.tono === "bad" ? "open" : ""}><summary><b>${esc(g.titulo)}</b> <span class="mv-pill ${g.tono === "bad" ? "bad" : "skip"}">${g.els.length}</span></summary><p class="hint">${esc(g.ayuda)}</p>${g.els.map(e => row(g, e)).join("")}</details>`).join("")}
+    ${huerfanas.length ? `<details class="mv-rev warn"><summary><b>Id del presupuesto que no están en los modelos</b> <span class="mv-pill skip">${huerfanas.length}</span></summary><p class="hint">Líneas cuyo elemento no aparece en ningún IFC cargado: borrado, cambiado o sin exportar. Pincha para ir a la partida.</p>${huerfanas.map(h => `<button class="mv-part" data-mvitem="${h.rs[0].item.id}"><span class="code">${esc(h.rs[0].item.code)}</span> ${esc(h.rs[0].line.c || "")}<em>${esc(h.t)}</em></button>`).join("")}</details>` : ""}</div>`, [{ label: "Cerrar" }]);
+  const m = document.querySelector("#modalRoot .modal"); if (m) m.classList.add("mv-wide");
+  // Si vuelves a la vista actual, deja su estado como estaba
+  mvLink();
+}
+document.addEventListener("click", async e => {
+  const j = e.target.closest("[data-mvjump]"); if (!j) return;
+  const [view, eid] = j.dataset.mvjump.split("|");
+  $("#modalRoot").innerHTML = "";
+  if (view !== MV.view) await mvSwitch(view);
+  const el = MV.ELEMS.find(x => x.eid === +eid); if (el){ mvPick(el); mvFit([el]); }
+});
 /* ===== Proyectado / Estado actual / Demoliciones ===== */
 function mvModelUI(){
   const sel = $("#mvModelSel"); if (!sel) return;
@@ -3534,13 +3641,14 @@ function mvPick(el){
   MV.SEL = el;
   if (!el){ $("#mvCard").hidden = true; mvPaint(); return; }
   const byItem = new Map(); (el.refs || []).forEach(r => { if (!byItem.has(r.item)) byItem.set(r.item, []); byItem.get(r.item).push(r); });
-  const st = el.state === "ok" ? `<span class="mv-pill ok">Medido</span>` : el.state === "bad" ? `<span class="mv-pill bad">Sin medir</span>` : `<span class="mv-pill skip">No se mide</span>`;
+  const st = el.state === "ok" ? `<span class="mv-pill ok">Medido</span>` : el.state === "part" ? `<span class="mv-pill part">Capas sin medir</span>` : el.state === "bad" ? `<span class="mv-pill bad">Sin medir</span>` : `<span class="mv-pill skip">No se mide</span>`;
   const skip = new Set(mvState().skip).has(mvKeyOf(el));
   $("#mvCard").innerHTML = `<button class="btn small ghost mv-x" data-mv="close" aria-label="Cerrar">✕</button>
     <b class="mv-title">${esc(el.longName || el.name || el.label)}</b>
     <div class="mv-meta"><span>${esc(el.label)}</span><span>Id ${esc(el.tag || el.parentTag || (el.cls === "IFCSPACE" && el.name ? "estancia nº " + el.name : "—"))}</span>${st}</div>
     ${byItem.size ? [...byItem].map(([it, rs]) => `<button class="mv-part" data-mvitem="${it.id}"><span class="code">${esc(it.code)}</span> ${esc(it.summary || "")}<em>${m2(rs.reduce((s, r) => s + r.q, 0))} ${esc(it.unit || "")}</em></button>`).join("")
       : `<p class="hint">No aparece en ninguna línea de medición.</p>`}
+    ${el.capas ? mvCapasHTML(el) : mvMulti(el) && el.state !== "skip" && !el.faseD ? `<div class="mv-capas"><div class="mv-asg-h">Multicapa · ${mvCapasDe(el).length} capas</div><p class="hint">${mvCapasDe(el).map(c => esc(c.mat)).join(" · ")}. Cada capa suele ir en su partida.</p></div>` : ""}
     <div class="mv-assign" id="mvAssign"></div>
     <div class="mv-acts"><button class="btn small" data-mv="hide">Quitar del visor</button>${el.measurable ? `<button class="btn small" data-mv="skip">${skip ? "Volver a contarlo" : "No se mide"}</button>` : ""}</div>`;
   $("#mvCard").hidden = false;
@@ -3813,6 +3921,7 @@ document.addEventListener("click", e => {
   const st = mvState(), act = b.dataset.mv;
   if (act === "close"){ MV.MULTI.clear(); mvPick(null); }
   else if (act === "pick") mvPickPartida();
+  else if (act === "revisar") mvRevisar();
   else if (act === "popout") mvPopout();
   else if (act === "bringback"){ if (MV.win && !MV.win.closed) MV.win.close(); MV.win = null; mvTab("modelo"); }
   else if (act === "assign") mvAssign();
@@ -3828,6 +3937,12 @@ document.addEventListener("click", e => {
       <div class="mv-list">${L.map(x => `<button class="mv-part" data-mvel="${x.eid}">${esc(x.label)} <span class="hint">${esc(x.longName || x.name)}</span><em>${esc(x.tag || "")}</em></button>`).join("")}</div>`;
     mvPaint();
   }
+});
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-mvcapa]"); if (!b || !MV.SEL) return;
+  const st = mvState(); st.capas = st.capas || {}; const k = mvTipo(MV.SEL) + "|" + b.dataset.mvcapa;
+  if (b.dataset.v) st.capas[k] = b.dataset.v; else delete st.capas[k];
+  markDirty(); const el = MV.SEL; mvRefresh(); mvPick(el);
 });
 document.addEventListener("click", e => { const b = e.target.closest("[data-mvel]"); if (!b) return; const el = MV.ELEMS.find(x => x.eid === +b.dataset.mvel); if (el){ mvPick(el); mvFit([el]); } });
 $("#mvFile").addEventListener("change", e => { const f = e.target.files[0]; if (!f) return; mvState()[MV.cur === "act" ? "ifcAct" : "ifc"] = f.name; markDirty(); mvLibs().then(() => mvLoadIfc(f)); e.target.value = ""; });
