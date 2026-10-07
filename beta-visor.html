@@ -468,7 +468,7 @@ tr.mv-flash td{background:var(--warn-bg) !important; transition:background .3s}
         <button class="btn small" id="mvLayersBtn" aria-expanded="false">Capas ▾</button>
         <label class="mv-chk"><input type="checkbox" id="mvGhost"> Solo lo seleccionado</label>
         <button class="btn small ghost" data-mv="fit">Encuadrar</button>
-        <button class="btn small ghost" data-mv="clear">Quitar selección</button>
+        <button class="btn small ghost" data-mv="clear" title="También con Esc o con un clic en el vacío">Quitar selección</button>
         <button class="btn small ghost wide-only" data-mv="popout" title="Abre el modelo en su propia ventana, para llevarlo a la segunda pantalla">⧉ Otra ventana</button>
       </div>
       <div class="mv-sum" id="mvSum"></div>
@@ -3351,6 +3351,7 @@ function mvSetupScene(){
       MV.MULTI.has(el) ? MV.MULTI.delete(el) : MV.MULTI.add(el);
       MV.SEL = [...MV.MULTI][0] || null; mvCardMulti(); return;
     }
+    if (!el){ mvClearSel(); return; }   // clic en vacío: quita todo
     MV.MULTI.clear(); mvPick(el);
   });
 }
@@ -3693,6 +3694,14 @@ function mvGoItem(it, el){
   if (MV_POP) mvS().select(it.id, tags); else mvShowInTree(it.id, tags);
   MV.SEL = el || MV.SEL; mvSyncSel(); mvPaint();
 }
+function mvClearSel(){ MV.MULTI.clear(); MV.SEL = null; MV.FOCUS = null; $("#mvCard").hidden = true; mvTip(null); mvPaint(); }
+// Esc: quita la selección (si no hay una ventana de diálogo abierta ni se está escribiendo)
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape" || !MV.on || !MV.loaded) return;
+  if ($("#modalRoot") && $("#modalRoot").innerHTML.trim()) return;
+  if (/INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || "")) return;
+  mvClearSel();
+});
 /* ===== Resumen del elemento al pasar el cursor ===== */
 function mvTipHTML(el){
   const byItem = new Map(); (el.refs || []).forEach(r => { if (!byItem.has(r.item)) byItem.set(r.item, []); byItem.get(r.item).push(r); });
@@ -4107,7 +4116,7 @@ document.addEventListener("click", e => {
   else if (act === "bringback"){ if (MV.win && !MV.win.closed) MV.win.close(); MV.win = null; mvTab("modelo"); }
   else if (act === "assign") mvAssign();
   else if (act === "fit") mvFit(MV.SEL ? [MV.SEL] : null);
-  else if (act === "clear"){ MV.MULTI.clear(); MV.SEL = null; MV.FOCUS = null; $("#mvCard").hidden = true; mvPaint(); }
+  else if (act === "clear") mvClearSel();
   else if (act === "unhide"){ st.hide = []; markDirty(); mvRefresh(); mvFit(); }
   else if (act === "hide" && MV.SEL){ st.hide.push(mvKeyOf(MV.SEL)); MV.SEL = null; $("#mvCard").hidden = true; markDirty(); mvRefresh(); mvFit(); toast("Quitado del visor"); }
   else if (act === "skip" && MV.SEL){ const k = mvKeyOf(MV.SEL), i = st.skip.indexOf(k); i >= 0 ? st.skip.splice(i, 1) : st.skip.push(k); markDirty(); const el = MV.SEL; mvRefresh(); mvPick(el); }
