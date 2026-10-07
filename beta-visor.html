@@ -360,6 +360,9 @@ body.mv-on [data-act="familiasVer"], body.mv-on #btnBaseSmall{display:none}
 body.mv-popup header, body.mv-popup #paneTree, body.mv-popup #paneDetail, body.mv-popup .tabs, body.mv-popup .pb-tabs, body.mv-popup [data-act="baseToggle"], body.mv-popup [data-mv="popout"]{display:none !important}
 body.mv-popup main{grid-template-columns:1fr !important; display:grid}
 body.mv-popup #paneBase{display:flex !important}
+.modal.mv-wide{width:min(720px, calc(100vw - 32px)); max-width:none}
+.mv-crumb{font-size:12.5px; display:flex; flex-wrap:wrap; gap:4px; align-items:center; margin-bottom:4px}
+.mv-chap{background:var(--surface)} .mv-pdet summary{cursor:pointer}
 td.idc{cursor:pointer; text-decoration:underline dotted; text-underline-offset:3px}
 tr.mv-flash td{background:var(--warn-bg) !important; transition:background .3s}
 @media (prefers-reduced-motion: reduce){ tr.mv-flash td{transition:none} }
@@ -3618,21 +3621,46 @@ function mvCardMulti(){
     <div class="mv-assign" id="mvAssign"></div>`;
   mvAssignUI(els); mvPaint();
 }
+/* Elegir partida: lo del presupuesto, buscador en la base y la base navegable por capítulos */
+function mvBaseTree(){
+  if (BASE._mvTree) return BASE._mvTree;
+  let root = null; const par = {};
+  for (const k in BASE.map){ const c = BASE.map[k]; if (c.isRoot && !root) root = k; if (c.isChapter || c.isRoot) for (const d of c.decomp || []) if (!par[d.code]) par[d.code] = k; }
+  return BASE._mvTree = { root, par };
+}
 function mvPickPartida(){
   const items = P.chapters.flatMap(c => c.items);
-  modal("Partida para medir", `<input id="mvPq" type="search" placeholder="Código o texto: tabicón, guarnecido, E06DBL060…" style="width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);margin-bottom:8px"><div id="mvPl" class="mv-plist"></div>`, [{ label: "Cancelar" }]);
+  const row = c => `<button class="mv-part" data-mvtc="${esc(c.code)}"><span class="code">${esc(c.code)}</span> ${esc(c.summary || "")}<em>${esc(c.unit || "")}</em></button>`;
+  let cwd = null;
+  modal("Partida para medir", `<input id="mvPq" type="search" placeholder="Buscar en el presupuesto y en la base: tabicón ladrillo, guarnecido, E06DBL060…" style="width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);margin-bottom:8px"><div id="mvPl" class="mv-plist"></div>`, [{ label: "Cancelar" }]);
+  document.querySelector("#modalRoot .modal") && document.querySelector("#modalRoot .modal").classList.add("mv-wide");
   const draw = () => {
     const w = fold($("#mvPq").value).split(/\s+/).filter(Boolean), hit = c => w.every(t => fold(c.code + " " + (c.summary || "")).includes(t));
-    const mine = items.filter(hit).slice(0, 30);
-    const base = BASE && w.length ? BASE.list.map(k => BASE.map[k]).filter(c => c && c.isPartida && hit(c) && !items.some(i => i.code === c.code)).slice(0, 40) : [];
-    $("#mvPl").innerHTML = (mine.length ? `<div class="mv-pgrp">En el presupuesto</div>` + mine.map(i => `<button class="mv-part" data-mvtc="${esc(i.code)}"><span class="code">${esc(i.code)}</span> ${esc(i.summary || "")}<em>${esc(i.unit || "")}</em></button>`).join("") : "")
-      + (base.length ? `<div class="mv-pgrp">En la base de precios</div>` + base.map(c => `<button class="mv-part" data-mvtc="${esc(c.code)}"><span class="code">${esc(c.code)}</span> ${esc(c.summary || "")}<em>${esc(c.unit || "")}</em></button>`).join("") : "")
-      || `<p class="hint">${w.length ? "Nada coincide." : ""}</p>`;
-    // Siempre se dice dónde se está buscando, para que no parezca que solo existen las del presupuesto
-    $("#mvPl").insertAdjacentHTML("afterbegin", `<p class="hint" style="margin:0 0 4px">${!BASE ? "Carga la base de precios para buscar también en ella." : w.length ? "Buscando en el presupuesto y en la base de precios." : `Escribe para buscar también entre las ${(BASE._nPart || (BASE._nPart = BASE.list.filter(k => BASE.map[k] && BASE.map[k].isPartida).length)).toLocaleString("es-ES")} partidas de la base de precios.`}</p>`);
+    let h = "";
+    if (w.length){
+      const mine = items.filter(hit).slice(0, 30);
+      const base = BASE ? BASE.list.map(k => BASE.map[k]).filter(c => c && c.isPartida && hit(c) && !items.some(i => i.code === c.code)).slice(0, 60) : [];
+      h = (mine.length ? `<div class="mv-pgrp">En el presupuesto</div>` + mine.map(row).join("") : "")
+        + (base.length ? `<div class="mv-pgrp">En la base de precios</div>` + base.map(row).join("") : "")
+        + (!mine.length && !base.length ? `<p class="hint">Nada coincide.</p>` : "");
+    } else {
+      if (items.length) h += `<details class="mv-pdet"><summary class="mv-pgrp">En el presupuesto (${items.length})</summary>${items.map(row).join("")}</details>`;
+      if (!BASE) h += `<p class="hint">Carga la base de precios para navegar por ella.</p>`;
+      else {
+        const T = mvBaseTree(); if (!cwd) cwd = (MV.pickCwd && BASE.map[MV.pickCwd]) ? MV.pickCwd : (BASE.map.E ? "E" : T.root);
+        const path = []; for (let k = cwd, g = 0; k && g < 15; k = T.par[k], g++) path.unshift(k);
+        h += `<div class="mv-pgrp">Base de precios</div><div class="mv-crumb">${path.map((k, n) => n === path.length - 1 ? `<b>${esc(n ? k : "Base")}</b>` : `<button class="mv-link2" data-mvch="${esc(k)}">${esc(n ? k : "Base")}</button>`).join(" › ")}</div>`;
+        const kids = ((BASE.map[cwd] || {}).decomp || []).map(d => BASE.map[d.code]).filter(Boolean);
+        h += kids.map(c => c.isChapter ? `<button class="mv-part mv-chap" data-mvch="${esc(c.code)}">📁 <span class="code">${esc(c.code)}</span> ${esc(c.summary || "")}</button>` : c.isPartida ? row(c) : "").join("") || `<p class="hint">Este capítulo no tiene partidas.</p>`;
+      }
+    }
+    $("#mvPl").innerHTML = h;
   };
   draw(); $("#mvPq").addEventListener("input", draw); setTimeout(() => $("#mvPq").focus(), 0);
-  $("#mvPl").onclick = e => { const b = e.target.closest("[data-mvtc]"); if (!b) return; MV.targetCode = b.dataset.mvtc; $("#modalRoot").innerHTML = ""; mvAssignUI(MV.MULTI.size ? [...MV.MULTI] : MV.SEL ? [MV.SEL] : []); };
+  $("#mvPl").onclick = e => {
+    const ch = e.target.closest("[data-mvch]"); if (ch){ cwd = MV.pickCwd = ch.dataset.mvch; draw(); $("#mvPl").scrollTop = 0; return; }
+    const b = e.target.closest("[data-mvtc]"); if (!b) return; MV.targetCode = b.dataset.mvtc; $("#modalRoot").innerHTML = ""; mvAssignUI(MV.MULTI.size ? [...MV.MULTI] : MV.SEL ? [MV.SEL] : []);
+  };
 }
 /* Id de una línea → elemento en el modelo */
 function mvShowTag(bim){
