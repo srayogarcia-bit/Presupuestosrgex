@@ -363,6 +363,7 @@ body.mv-popup #paneBase{display:flex !important}
 .modal.mv-wide{width:min(720px, calc(100vw - 32px)); max-width:none}
 .mv-crumb{font-size:12.5px; display:flex; flex-wrap:wrap; gap:4px; align-items:center; margin-bottom:4px}
 .mv-chap{background:var(--surface)} .mv-pdet summary{cursor:pointer}
+.mv-geo{color:var(--warn)}
 td.idc{cursor:pointer; text-decoration:underline dotted; text-underline-offset:3px}
 tr.mv-flash td{background:var(--warn-bg) !important; transition:background .3s}
 @media (prefers-reduced-motion: reduce){ tr.mv-flash td{transition:none} }
@@ -3517,7 +3518,46 @@ async function mvQto(el){
       if (nm && val && !(nm in q)) q[nm] = +val.value;
     }
   } catch(e){}
+  // Si el IFC no trae cantidades base, se calculan de la geometría del elemento
+  const g = mvGeomQto(el);
+  for (const k in g) if (!(k in q) && g[k] > 0){ q[k] = g[k]; q._geom = true; }
   return el.q = q;
+}
+/* Cantidades a partir de la malla 3D (coordenadas reales, eje vertical Y):
+   longitud, espesor y altura por el eje principal en planta; caras laterales, superiores y volumen por los triángulos */
+function mvGeomQto(el){
+  const P3 = [], T = [];
+  for (const m of el.meshes){
+    const pos = m.geometry.attributes.position, idx = m.geometry.index, base = P3.length / 3, v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++){ v.fromBufferAttribute(pos, i).applyMatrix4(m.matrix); P3.push(v.x, v.y, v.z); }
+    for (let i = 0; i < idx.count; i++) T.push(base + idx.getX(i));
+  }
+  if (!T.length) return {};
+  const n = P3.length / 3;
+  let mx = 0, mz = 0, ymin = Infinity, ymax = -Infinity;
+  for (let i = 0; i < n; i++){ mx += P3[3*i]; mz += P3[3*i+2]; ymin = Math.min(ymin, P3[3*i+1]); ymax = Math.max(ymax, P3[3*i+1]); }
+  mx /= n; mz /= n;
+  let sxx = 0, szz = 0, sxz = 0;
+  for (let i = 0; i < n; i++){ const dx = P3[3*i] - mx, dz = P3[3*i+2] - mz; sxx += dx*dx; szz += dz*dz; sxz += dx*dz; }
+  const ang = 0.5 * Math.atan2(2 * sxz, sxx - szz), ux = Math.cos(ang), uz = Math.sin(ang);   // eje principal en planta
+  let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+  for (let i = 0; i < n; i++){ const dx = P3[3*i] - mx, dz = P3[3*i+2] - mz, a = dx*ux + dz*uz, b = -dx*uz + dz*ux; a0 = Math.min(a0, a); a1 = Math.max(a1, a); b0 = Math.min(b0, b); b1 = Math.max(b1, b); }
+  const L = a1 - a0, W = b1 - b0, H = ymax - ymin;
+  let side = 0, up = 0, vol = 0;
+  const A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3(), e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), cr = new THREE.Vector3();
+  for (let t = 0; t < T.length; t += 3){
+    A.fromArray(P3, 3*T[t]); B.fromArray(P3, 3*T[t+1]); C.fromArray(P3, 3*T[t+2]);
+    e1.subVectors(B, A); e2.subVectors(C, A); cr.crossVectors(e1, e2);
+    const area = cr.length() / 2; if (!area) continue;
+    const nx = cr.x / (2*area), ny = cr.y / (2*area), nz = cr.z / (2*area);
+    if (Math.abs(-nx*uz + nz*ux) > 0.9) side += area;          // caras grandes del muro
+    if (ny > 0.2) up += area;                                   // caras hacia arriba (suelos, cubiertas en verdadera magnitud)
+    vol += A.dot(cr.crossVectors(B, C)) / 6;
+  }
+  const r = x => Math.round(x * 1000) / 1000;
+  const q = { length: r(L), width: r(W), height: r(H), grossvolume: r(Math.abs(vol)), netvolume: r(Math.abs(vol)), netarea: r(up), grossarea: r(up), netfloorarea: r(up) };
+  if (mvIsWall(el)){ q.grosssidearea = r(L * H); q.netsidearea = r(side / 2); }
+  return q;
 }
 const mvIsWall = el => /^IFC(WALL|WALLSTANDARDCASE|CURTAINWALL|COVERING)$/.test(el.cls);
 function mvTarget(){
@@ -3577,10 +3617,11 @@ function mvAssignUI(els){
 async function mvPreview(els, it){
   const crit = $("#mvCrit") && $("#mvCrit").value; if (!crit) return;
   let tot = 0, nl = 0, nh = 0; const errs = [];
-  for (const el of els){ const r = await mvLinesFor(el, crit, it.code); if (r.err) errs.push(r.err); r.lines.forEach(l => { tot += lineParcial(l); nl++; if (/^\s+A deducir/.test(l.c)) nh++; }); }
+  let geo = false;
+  for (const el of els){ const r = await mvLinesFor(el, crit, it.code); if (el.q && el.q._geom) geo = true; if (r.err) errs.push(r.err); r.lines.forEach(l => { tot += lineParcial(l); nl++; if (/^\s+A deducir/.test(l.c)) nh++; }); }
   const p = $("#mvPrev"); if (!p) return;
   const thr = /^bh/.test(crit) ? rfThreshold(it.code) : null;
-  p.innerHTML = `<b>${m2(tot)} ${esc(it.unit || "")}</b> · ${nl} líneas${nh ? `, ${nh} huecos descontados` : ""}${thr !== null ? ` · la partida descuenta ${thr === Infinity ? "ningún hueco" : thr > 0 ? `huecos de más de ${String(thr).replace(".", ",")} m²` : "todos los huecos"}` : ""}${errs.length ? `<br><span class="mv-err">${esc([...new Set(errs)].join("; "))}</span>` : ""}`;
+  p.innerHTML = `<b>${m2(tot)} ${esc(it.unit || "")}</b> · ${nl} líneas${nh ? `, ${nh} huecos descontados` : ""}${thr !== null ? ` · la partida descuenta ${thr === Infinity ? "ningún hueco" : thr > 0 ? `huecos de más de ${String(thr).replace(".", ",")} m²` : "todos los huecos"}` : ""}${geo ? `<br><span class="mv-geo">Medido de la geometría: el IFC no trae cantidades base.</span>` : ""}${errs.length ? `<br><span class="mv-err">${esc([...new Set(errs)].join("; "))}</span>` : ""}`;
 }
 async function mvAssign(){
   const t = mvTarget(); if (!t) return;
