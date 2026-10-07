@@ -333,6 +333,18 @@ body.mv-on [data-act="familiasVer"], body.mv-on #btnBaseSmall{display:none}
 .mv-legend span{display:inline-flex; align-items:center; gap:5px} .mv-legend i{width:10px; height:10px; border-radius:3px; display:inline-block}
 .mv-card{position:absolute; right:10px; top:10px; width:min(330px, calc(100% - 20px)); max-height:calc(100% - 60px); overflow:auto; background:var(--surface); border:1px solid var(--line); border-radius:9px; box-shadow:0 6px 22px rgba(0,0,0,.14); padding:12px; display:grid; gap:8px}
 .mv-card[hidden]{display:none}
+.mv-tip{position:absolute; z-index:5; pointer-events:none; width:max-content; max-width:300px; background:var(--surface); border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,.16); padding:9px 10px; display:grid; gap:4px; font-size:12px}
+.mv-tip[hidden]{display:none}
+.mv-tip-t{font-weight:600; font-size:12.5px}
+.mv-tip-m{color:var(--muted); display:flex; gap:6px; align-items:center; flex-wrap:wrap}
+.mv-tip-h{font-weight:600; margin-top:3px}
+.mv-tip-r{display:grid; grid-template-columns:auto 1fr auto; gap:6px; align-items:baseline}
+.mv-tip-s{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); max-width:140px}
+.mv-tip-bar{height:5px; border-radius:3px; background:color-mix(in srgb, var(--mv-ok) 22%, transparent); overflow:hidden}
+.mv-tip-bar i{display:block; height:100%; background:var(--mv-ok)}
+.mv-tip-c{color:var(--muted); font-size:11px}
+.mv-tip-i{border-top:1px solid var(--line); padding-top:4px; text-align:right}
+
 .mv-x{position:absolute; top:6px; right:6px}
 .mv-title{font-size:14px; padding-right:28px}
 .mv-meta{display:flex; flex-wrap:wrap; gap:4px 10px; font-size:12px; color:var(--muted)}
@@ -460,7 +472,7 @@ tr.mv-flash td{background:var(--warn-bg) !important; transition:background .3s}
         <button class="btn small ghost wide-only" data-mv="popout" title="Abre el modelo en su propia ventana, para llevarlo a la segunda pantalla">⧉ Otra ventana</button>
       </div>
       <div class="mv-sum" id="mvSum"></div>
-      <div class="mv-view" id="mvView"><canvas id="mvCanvas"></canvas><div class="mv-layers" id="mvLayers" hidden></div><div class="mv-msg" id="mvMsg"></div>
+      <div class="mv-view" id="mvView"><div class="mv-tip" id="mvTip" hidden></div><canvas id="mvCanvas"></canvas><div class="mv-layers" id="mvLayers" hidden></div><div class="mv-msg" id="mvMsg"></div>
         <div class="mv-legend"><span><i style="background:var(--mv-ok)"></i>Medido</span><span><i style="background:var(--mv-part)"></i>Capas sin medir</span><span><i style="background:var(--mv-bad)"></i>Sin medir</span><span><i style="background:var(--mv-skip)"></i>No se mide</span><span><i style="background:var(--mv-hl)"></i>Seleccionado</span></div>
         <div class="mv-card" id="mvCard" hidden></div>
       </div>
@@ -3311,7 +3323,22 @@ function mvSetupScene(){
   new ResizeObserver(resize).observe($("#mvView")); resize();
   (function loop(){ requestAnimationFrame(loop); if (!MV.on) return; controls.update(); renderer.render(scene, camera); })();
   const ray = new THREE.Raycaster(), mouse = new THREE.Vector2(); let down = null;
-  cv.addEventListener("pointerdown", e => { down = [e.clientX, e.clientY]; });
+  cv.addEventListener("pointerdown", e => { down = [e.clientX, e.clientY]; mvTip(null); });
+  // Resumen al pasar el cursor (uno por fotograma como mucho)
+  let hov = null, raf = 0;
+  cv.addEventListener("pointermove", e => {
+    if (e.buttons || e.pointerType === "touch") return;
+    hov = e; if (raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0; const ev = hov, r = cv.getBoundingClientRect();
+      mouse.set((ev.clientX - r.left) / r.width * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+      ray.setFromCamera(mouse, camera);
+      const hs = ray.intersectObjects(MV.three.group.children.filter(m => m.visible && m.material.opacity > 0.1), false).filter(h => !MV.plan || h.point.y <= MV.clip.constant);
+      const h = hs.find(x => x.object.userData.el.cls !== "IFCSPACE") || hs[0];
+      mvTip(h ? h.object.userData.el : null, ev.clientX - r.left, ev.clientY - r.top);
+    });
+  });
+  cv.addEventListener("pointerleave", () => mvTip(null));
   cv.addEventListener("pointerup", e => {
     if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
     const r = cv.getBoundingClientRect(); mouse.set((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
@@ -3527,6 +3554,7 @@ function mvPaint(){
   }
 }
 function mvRefresh(){
+  MV.tipEl = null;
   if (!MV.loaded){ $("#mvSum").innerHTML = ""; return; }
   mvLink();
   let ok = 0, bad = 0; const by = {};
@@ -3664,6 +3692,46 @@ function mvGoItem(it, el){
   const tags = el && el.tags ? [...el.tags] : [];
   if (MV_POP) mvS().select(it.id, tags); else mvShowInTree(it.id, tags);
   MV.SEL = el || MV.SEL; mvSyncSel(); mvPaint();
+}
+/* ===== Resumen del elemento al pasar el cursor ===== */
+function mvTipHTML(el){
+  const byItem = new Map(); (el.refs || []).forEach(r => { if (!byItem.has(r.item)) byItem.set(r.item, []); byItem.get(r.item).push(r); });
+  const certs = P.certs || [];
+  let imp = 0;
+  const rows = [...byItem].map(([it, rs]) => {
+    let q = 0, qc = 0; const ns = new Set();
+    for (const r of rs){ q += r.q; const ci = certs.length ? lineCertAt(P, it, r.line.id) : -1; if (ci >= 0){ qc += r.q; ns.add(certs[ci].n || ci + 1); } }
+    imp += q * (it.price || 0);
+    const pc = q > 0 ? Math.max(0, Math.min(100, Math.round(qc / q * 100))) : 0;
+    return `<div class="mv-tip-r"><span class="code">${esc(it.code)}</span><span class="mv-tip-s">${esc(it.summary || "")}</span><b>${m2(q)} ${esc(it.unit || "")}</b></div>
+      ${certs.length ? `<div class="mv-tip-bar" title="Certificado ${pc} %"><i style="width:${pc}%"></i></div><div class="mv-tip-c">${pc ? `Certificado ${pc} %${ns.size ? ` · cert. ${[...ns].join(", ")}` : ""}` : "Sin certificar"}</div>` : ""}`;
+  }).join("");
+  const st = { ok: ["ok", "Medido"], part: ["part", "Capas sin medir"], bad: ["bad", "Sin medir"], skip: ["skip", "No se mide"] }[el.state] || ["skip", ""];
+  const fase = el.faseD ? `Se derriba (${el.faseD})` : el.faseC || "";
+  let capas = "";
+  if (mvMulti(el)){
+    const C = el.capas || mvCapas(el), r = t => Math.round(t * 1000);
+    capas = `<div class="mv-tip-h">Capas</div>` + C.capas.map(c => {
+      const q = c.code && c.code !== "?" ? (byItem.size ? [...byItem].filter(([it]) => it.code === c.code).flatMap(([, rs]) => rs).reduce((a, x) => a + x.q, 0) : 0) : 0;
+      const tag = c.ack ? (c.ack === "incl" ? "incluida" : "no se mide") : c.code === "?" ? "medida" : c.code || "sin partida";
+      return `<div class="mv-tip-r"><span>${esc(c.mat)} <span class="hint">${c.n > 1 ? c.n + "×" + r(c.e[0]) : r(c.t)} mm</span></span><span class="mv-tip-s"></span><span class="mv-pill ${c.code || c.ack ? (c.ack ? "skip" : "ok") : "part"}">${esc(tag)}${q ? " · " + m2(q) : ""}</span></div>`;
+    }).join("");
+  }
+  return `<div class="mv-tip-t">${esc(el.longName || el.name || el.label)}</div>
+    <div class="mv-tip-m">${esc(el.label)}${el.tag || el.parentTag ? " · Id " + esc(el.tag || el.parentTag) : ""}${el.storey ? " · " + esc(String(el.storey).replace(/^.*_(P\w+)$/, "$1")) : ""}</div>
+    <div class="mv-tip-m"><span class="mv-pill ${st[0]}">${st[1]}</span>${fase ? ` <span>${esc(fase)}</span>` : ""}</div>
+    ${rows || (el.measurable ? `<div class="hint">En ninguna partida</div>` : "")}
+    ${capas}
+    ${imp ? `<div class="mv-tip-i">Importe <b>${m2(imp)} €</b></div>` : ""}`;
+}
+function mvTip(el, x, y){
+  const t = $("#mvTip"); if (!t) return;
+  if (!el){ t.hidden = true; MV.tipEl = null; return; }
+  if (MV.tipEl !== el){ t.innerHTML = mvTipHTML(el); MV.tipEl = el; }
+  t.hidden = false;
+  const V = $("#mvView").getBoundingClientRect(), w = t.offsetWidth, h = t.offsetHeight;
+  t.style.left = Math.max(6, Math.min(x + 16, V.width - w - 6)) + "px";
+  t.style.top = Math.max(6, Math.min(y + 16, V.height - h - 6)) + "px";
 }
 /* ===== Medir desde el modelo: asignar elementos a una partida con un criterio ===== */
 async function mvQto(el){
