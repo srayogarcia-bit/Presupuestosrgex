@@ -364,6 +364,7 @@ body.mv-popup #paneBase{display:flex !important}
 .mv-crumb{font-size:12.5px; display:flex; flex-wrap:wrap; gap:4px; align-items:center; margin-bottom:4px}
 .mv-chap{background:var(--surface)} .mv-pdet summary{cursor:pointer}
 .mv-geo{color:var(--warn)}
+.mv-msel{padding:4px 7px; border:1px solid var(--line); border-radius:6px; background:var(--surface); font-size:12.5px; max-width:230px}
 td.idc{cursor:pointer; text-decoration:underline dotted; text-underline-offset:3px}
 tr.mv-flash td{background:var(--warn-bg) !important; transition:background .3s}
 @media (prefers-reduced-motion: reduce){ tr.mv-flash td{transition:none} }
@@ -439,6 +440,7 @@ tr.mv-flash td{background:var(--warn-bg) !important; transition:background .3s}
     <div id="baseBody" class="scroll"></div>
     <div id="mvBody" hidden>
       <div class="mv-bar">
+        <select id="mvModelSel" class="mv-msel" aria-label="Modelo"><option value="proj">Proyectado</option><option value="act">Estado actual</option><option value="demo">Demoliciones</option></select>
         <label class="btn small" for="mvFile">Abrir IFC</label><input type="file" id="mvFile" accept=".ifc" hidden>
         <button class="btn small" id="mvLayersBtn" aria-expanded="false">Capas ▾</button>
         <label class="mv-chk"><input type="checkbox" id="mvGhost"> Solo lo seleccionado</label>
@@ -3235,7 +3237,10 @@ $("#fRooms").addEventListener("change", async e => {
    por el Id de cada línea (Tag de IFC = Id de Revit). */
 const MV = {
   on: false, loaded: false, libs: null, ifc: null, modelID: null, ELEMS: [], byTag: {}, roomNames: {}, partsByTag: {},
-  SEL: null, FOCUS: null, three: null, fileName: "", MULTI: new Set(), target: null
+  SEL: null, FOCUS: null, three: null, fileName: "", MULTI: new Set(), target: null,
+  // Dos modelos a la vez: el proyectado y el del estado actual (de este último sale también la vista de demoliciones)
+  slots: { proj: { ELEMS: [], modelID: null, loaded: false, fileName: "", file: null, group: null }, act: { ELEMS: [], modelID: null, loaded: false, fileName: "", file: null, group: null } },
+  cur: "proj", view: "proj"
 };
 const MV_CLASES = {
   IFCWALL: "Muros", IFCWALLSTANDARDCASE: "Muros", IFCCURTAINWALL: "Muros cortina", IFCSLAB: "Suelos y forjados", IFCROOF: "Cubiertas",
@@ -3289,7 +3294,7 @@ function mvSetupScene(){
   const controls = new THREE.OrbitControls(camera, cv); controls.enableDamping = true;
   scene.add(new THREE.HemisphereLight(0xffffff, 0x8899aa, 0.85));
   const sun = new THREE.DirectionalLight(0xffffff, 0.55); sun.position.set(30, 60, 20); scene.add(sun);
-  const group = new THREE.Group(); scene.add(group);
+  const group = new THREE.Group(); scene.add(group); MV.slots.proj.group = group;
   MV.three = { renderer, scene, camera, controls, group };
   const resize = () => { const r = $("#mvView").getBoundingClientRect(); if (!r.width) return; renderer.setSize(r.width, r.height, false); camera.aspect = r.width / Math.max(1, r.height); camera.updateProjectionMatrix(); };
   new ResizeObserver(resize).observe($("#mvView")); resize();
@@ -3300,7 +3305,7 @@ function mvSetupScene(){
     if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
     const r = cv.getBoundingClientRect(); mouse.set((e.clientX - r.left) / r.width * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(mouse, camera);
-    const hits = ray.intersectObjects(group.children.filter(m => m.visible && m.material.opacity > 0.1), false);
+    const hits = ray.intersectObjects(MV.three.group.children.filter(m => m.visible && m.material.opacity > 0.1), false);
     const hit = hits.find(h => h.object.userData.el.cls !== "IFCSPACE") || hits[0];
     const el = hit ? hit.object.userData.el : null;
     if (el && (e.ctrlKey || e.metaKey || e.shiftKey)){
@@ -3349,7 +3354,7 @@ async function mvLoadIfc(file){
     const rels = ifc.GetLineIDsWithType(id, WebIFC.IFCRELAGGREGATES);
     for (let i = 0; i < rels.size(); i++){
       const r = ifc.GetLine(id, rels.get(i)), parent = getEl(r.RelatingObject.value);
-      for (const o of r.RelatedObjects || []){ const ch = getEl(o.value); ch.parentEid = parent.eid; if (!ch.tag && parent.tag) ch.parentTag = parent.tag; }
+      for (const o of r.RelatedObjects || []){ const ch = getEl(o.value); ch.parentEid = parent.eid; if (parent.tag && parent.tag !== ch.tag) ch.parentTag = parent.tag; }   // p. ej. el tramo de una escalera lleva su propio Id, pero se mide por el de la escalera
     }
     // Huecos: muro → hueco (IfcRelVoidsElement) → puerta o ventana que lo rellena (IfcRelFillsElement)
     const fillOf = {};
@@ -3366,16 +3371,29 @@ async function mvLoadIfc(file){
     } } catch(e){}
     for (const el of byEid.values()) if (el.cls === "IFCBUILDINGSTOREY") for (let i = 0; i < rels.size(); i++){ const r = ifc.GetLine(id, rels.get(i)); if (r.RelatingObject.value === el.eid) for (const o of r.RelatedObjects || []){ const ch = getEl(o.value); if (!ch.storey) ch.storey = el.name || el.longName; } }
     for (const el of byEid.values()) if (!el.storey && el.parentEid) el.storey = (byEid.get(el.parentEid) || {}).storey;
+    // Fases de Revit (conjunto «Proceso por fases»): de qué fase es cada elemento y si se derriba
+    try { const pr = ifc.GetLineIDsWithType(id, WebIFC.IFCRELDEFINESBYPROPERTIES); for (let i = 0; i < pr.size(); i++){
+      const r = ifc.GetLine(id, pr.get(i)); const pd = ifc.GetLine(id, r.RelatingPropertyDefinition.value);
+      if (!pd || !/proceso por fases|phasing/i.test(String(v(pd.Name) || ""))) continue;
+      let fc = "", fd = "";
+      for (const p of pd.HasProperties || []){ const pp = ifc.GetLine(id, p.value), nm = String(v(pp.Name) || ""), val = String(v(pp.NominalValue) || "");
+        if (/creaci|created/i.test(nm)) fc = val; else if (/derribo|demolish/i.test(nm)) fd = val; }
+      for (const o of r.RelatedObjects || []){ const el = getEl(o.value); if (fc) el.faseC = fc; if (fd) el.faseD = fd; }
+    } } catch(e){}
+    for (const el of byEid.values()) el.fase = el.faseD ? "Se derriba" : (el.faseC || "Sin fase");
     MV.ELEMS = [...byEid.values()].filter(e => e.meshes.length);
     mvBuildLayers();
     MV.loaded = true; MV.fileName = file.name; MV.file = file;
-    if (MV_POP) mvS().setFile(file);
+    Object.assign(MV.slots[MV.cur], { ELEMS: MV.ELEMS, modelID: MV.modelID, loaded: true, fileName: file.name, file });
+    if (MV_POP) mvS().setFile(file, MV.cur); else MV.files = Object.assign(MV.files || {}, { [MV.cur]: file });
+    mvModelUI();
     msg.hidden = true; mvRefresh(); mvFit(); mvSyncSel();
   } catch(e){ console.error(e); msg.hidden = false; msg.textContent = "No he podido leer ese IFC. Comprueba que es un archivo IFC exportado desde Revit."; }
 }
 /* Busca el IFC en la carpeta del presupuesto y, si no, en las carpetas 2_ (propuestas) y 4_ (proyecto) del expediente */
-async function mvFindIfc(){
-  if (MV_POP) return mvS().file || null;
+async function mvFindIfc(kind){
+  kind = kind || MV.cur;
+  if (MV_POP) return mvS().fileOf(kind) || null;
   if (!(typeof FS !== "undefined" && FS.ok && P.file && P.file.dir)) return null;
   const found = [];
   const scan = async (dh, depth) => {
@@ -3390,8 +3408,12 @@ async function mvFindIfc(){
     if (!found.length) for await (const [name, h] of root.entries()) if (h.kind === "directory" && /^[24]_/.test(name)) await scan(h, 2);
   } catch(e){ return null; }
   if (!found.length) return null;
-  found.sort((a, b) => (b.name === (P.mv && P.mv.ifc) ? 1 : 0) - (a.name === (P.mv && P.mv.ifc) ? 1 : 0) || b.f.lastModified - a.f.lastModified);
-  return found[0].f;
+  // El del estado actual se reconoce por el nombre (ACTUAL, EXISTENTE…); el proyectado es el resto
+  const isAct = n => /actual|existente|_act\b|_ea\b/i.test(n);
+  const pool = found.filter(x => kind === "act" ? isAct(x.name) : !isAct(x.name));
+  const pref = P.mv && P.mv[kind === "act" ? "ifcAct" : "ifc"];
+  pool.sort((a, b) => (b.name === pref ? 1 : 0) - (a.name === pref ? 1 : 0) || b.f.lastModified - a.f.lastModified);
+  return pool.length ? pool[0].f : null;
 }
 
 /* --- Enlace con el presupuesto (en vivo) --- */
@@ -3434,7 +3456,7 @@ function mvPaint(){
   for (const el of MV.ELEMS){
     const isSp = el.cls === "IFCSPACE";
     const hl = el === MV.SEL || MV.MULTI.has(el) || (focus && el.refs && el.refs.some(r => focus.has(r.item)));
-    const layerOn = Ly.cat[el.label] !== false && Ly.lvl[el.storey || "—"] !== false && Ly.st[el.state] !== false;
+    const layerOn = Ly.cat[el.label] !== false && Ly.lvl[el.storey || "—"] !== false && Ly.st[el.state] !== false && (Ly.fase || {})[el.fase] !== false && (MV.view !== "demo" || !!el.faseD);
     const visible = !el.hidden && (layerOn || (isSp && hl));
     const dim = (focus || MV.SEL || MV.MULTI.size) && !hl;
     for (const m of el.meshes){
@@ -3448,7 +3470,7 @@ function mvRefresh(){
   if (!MV.loaded){ $("#mvSum").innerHTML = ""; return; }
   mvLink();
   let ok = 0, bad = 0; const by = {};
-  for (const el of MV.ELEMS){ if (!el.measurable || el.hidden) continue; const b = by[el.label] = by[el.label] || { ok: 0, bad: 0 }; if (el.state === "ok"){ ok++; b.ok++; } else if (el.state === "bad"){ bad++; b.bad++; } }
+  for (const el of MV.ELEMS){ if (!el.measurable || el.hidden || (MV.view === "demo" && !el.faseD)) continue; const b = by[el.label] = by[el.label] || { ok: 0, bad: 0 }; if (el.state === "ok"){ ok++; b.ok++; } else if (el.state === "bad"){ bad++; b.bad++; } }
   const faltan = Object.entries(by).filter(([, v]) => v.bad).sort((a, b) => b[1].bad - a[1].bad).map(([k, v]) => `${esc(k)} ${v.bad}`).join(" · ");
   const nh = MV.ELEMS.filter(e => e.hidden).length;
   if (MV.layers) mvDrawLayers();
@@ -3460,17 +3482,42 @@ function mvRefresh(){
 /* ===== Capas: encender y apagar por tipo de elemento, planta y estado ===== */
 function mvBuildLayers(){
   const prev = (P.mv && P.mv.layers) || MV.layers || { cat: { Estancias: false }, lvl: {}, st: {} };
-  MV.layers = { cat: Object.assign({ Estancias: false }, prev.cat), lvl: Object.assign({}, prev.lvl), st: Object.assign({}, prev.st) };
+  MV.layers = { cat: Object.assign({ Estancias: false }, prev.cat), lvl: Object.assign({}, prev.lvl), st: Object.assign({}, prev.st), fase: Object.assign({}, prev.fase) };
   mvDrawLayers();
 }
 function mvDrawLayers(){
   const box = $("#mvLayers"); if (!box || !MV.ELEMS.length) return;
-  const cnt = k => { const m = {}; MV.ELEMS.forEach(e => { if (!e.hidden) m[k(e)] = (m[k(e)] || 0) + 1; }); return m; };
-  const cats = cnt(e => e.label), lvls = cnt(e => e.storey || "—"), sts = cnt(e => e.state || "bad"), L = MV.layers;
+  const cnt = k => { const m = {}; MV.ELEMS.forEach(e => { if (!e.hidden && (MV.view !== "demo" || e.faseD)) m[k(e)] = (m[k(e)] || 0) + 1; }); return m; };
+  const cats = cnt(e => e.label), lvls = cnt(e => e.storey || "—"), sts = cnt(e => e.state || "bad"), fases = cnt(e => e.fase || "Sin fase"), L = MV.layers; L.fase = L.fase || {};
   const grp = (title, key, map, names) => `<div class="mv-lg"><div class="mv-lgh"><span>${title}</span><button class="mv-link2" data-mvlall="${key}">todo</button><button class="mv-link2" data-mvlnone="${key}">nada</button></div>${Object.keys(map).sort((a, b) => (names ? 0 : a.localeCompare(b, "es"))).map(k => `<label><input type="checkbox" data-mvl="${key}" data-mvk="${esc(k)}" ${L[key][k] !== false ? "checked" : ""}> ${esc(names ? names[k] || k : k)} <em>${map[k]}</em></label>`).join("")}</div>`;
-  box.innerHTML = grp("Elementos", "cat", cats) + (Object.keys(lvls).length > 1 ? grp("Plantas", "lvl", lvls) : "") + grp("Estado", "st", sts, { ok: "Medido", bad: "Sin medir", skip: "No se mide" });
+  box.innerHTML = grp("Elementos", "cat", cats) + (Object.keys(lvls).length > 1 ? grp("Plantas", "lvl", lvls) : "") + (MV.view !== "demo" && Object.keys(fases).length > 1 ? grp("Fase", "fase", fases) : "") + grp("Estado", "st", sts, { ok: "Medido", bad: "Sin medir", skip: "No se mide" });
 }
 function mvSaveLayers(){ mvState().layers = MV.layers; markDirty(); mvPaint(); }
+/* ===== Proyectado / Estado actual / Demoliciones ===== */
+function mvModelUI(){
+  const sel = $("#mvModelSel"); if (!sel) return;
+  const nm = k => MV.slots[k].loaded ? MV.slots[k].fileName : "sin IFC";
+  sel.innerHTML = `<option value="proj">Proyectado · ${esc(nm("proj"))}</option><option value="act">Estado actual · ${esc(nm("act"))}</option><option value="demo">Demoliciones · ${esc(nm("act"))}</option>`;
+  sel.value = MV.view;
+}
+async function mvSwitch(view){
+  await mvLibs();
+  const cs = MV.slots[MV.cur];
+  Object.assign(cs, { ELEMS: MV.ELEMS, modelID: MV.modelID, loaded: MV.loaded, fileName: MV.fileName, file: MV.file });
+  MV.view = view; MV.cur = view === "proj" ? "proj" : "act";
+  const s2 = MV.slots[MV.cur];
+  if (!s2.group){ s2.group = new THREE.Group(); MV.three.scene.add(s2.group); }
+  for (const k in MV.slots) if (MV.slots[k].group) MV.slots[k].group.visible = k === MV.cur;
+  MV.three.group = s2.group;
+  Object.assign(MV, { ELEMS: s2.ELEMS, modelID: s2.modelID, loaded: s2.loaded, fileName: s2.fileName, file: s2.file });
+  MV.SEL = null; MV.MULTI.clear(); $("#mvCard").hidden = true;
+  mvModelUI();
+  if (MV.loaded){ $("#mvMsg").hidden = true; mvBuildLayers(); mvRefresh(); mvFit(); mvSyncSel(); return; }
+  $("#mvSum").innerHTML = "";
+  const f = await mvFindIfc(MV.cur);
+  if (f){ toast(`Abriendo ${f.name}`); await mvLoadIfc(f); if (view === "demo") mvRefresh(); }
+  else { $("#mvMsg").hidden = false; $("#mvMsg").innerHTML = `Abre el IFC del <b>estado actual</b> con <b>Abrir IFC</b>.<br><span class="hint">Exporta desde Revit la fase 01 Estado actual. Si su nombre lleva ACTUAL y está en la carpeta del expediente, se abre solo. Las demoliciones salen de este mismo IFC: los elementos con fase de derribo.</span>`; }
+}
 /* Selección en el árbol → resalta en el modelo */
 function mvSyncSel(){
   if (!MV.on || !MV.loaded) return;
@@ -3775,7 +3822,7 @@ document.addEventListener("click", e => {
   else if (act === "hide" && MV.SEL){ st.hide.push(mvKeyOf(MV.SEL)); MV.SEL = null; $("#mvCard").hidden = true; markDirty(); mvRefresh(); mvFit(); toast("Quitado del visor"); }
   else if (act === "skip" && MV.SEL){ const k = mvKeyOf(MV.SEL), i = st.skip.indexOf(k); i >= 0 ? st.skip.splice(i, 1) : st.skip.push(k); markDirty(); const el = MV.SEL; mvRefresh(); mvPick(el); }
   else if (act === "sinmedir"){
-    const L = MV.ELEMS.filter(x => x.state === "bad" && !x.hidden);
+    const L = MV.ELEMS.filter(x => x.state === "bad" && !x.hidden && (MV.view !== "demo" || x.faseD));
     MV.FOCUS = null; MV.SEL = null; $("#mvCard").hidden = false;
     $("#mvCard").innerHTML = `<button class="btn small ghost mv-x" data-mv="close" aria-label="Cerrar">✕</button><b class="mv-title">Sin medir (${L.length})</b>
       <div class="mv-list">${L.map(x => `<button class="mv-part" data-mvel="${x.eid}">${esc(x.label)} <span class="hint">${esc(x.longName || x.name)}</span><em>${esc(x.tag || "")}</em></button>`).join("")}</div>`;
@@ -3783,14 +3830,15 @@ document.addEventListener("click", e => {
   }
 });
 document.addEventListener("click", e => { const b = e.target.closest("[data-mvel]"); if (!b) return; const el = MV.ELEMS.find(x => x.eid === +b.dataset.mvel); if (el){ mvPick(el); mvFit([el]); } });
-$("#mvFile").addEventListener("change", e => { const f = e.target.files[0]; if (!f) return; mvState().ifc = f.name; markDirty(); mvLoadIfc(f); e.target.value = ""; });
+$("#mvFile").addEventListener("change", e => { const f = e.target.files[0]; if (!f) return; mvState()[MV.cur === "act" ? "ifcAct" : "ifc"] = f.name; markDirty(); mvLibs().then(() => mvLoadIfc(f)); e.target.value = ""; });
+$("#mvModelSel").addEventListener("change", e => mvSwitch(e.target.value));
 $("#mvLayersBtn").addEventListener("click", () => { const b = $("#mvLayers"); b.hidden = !b.hidden; $("#mvLayersBtn").setAttribute("aria-expanded", !b.hidden); });
 $("#mvLayers").addEventListener("change", e => { const t = e.target; if (!t.dataset.mvl) return; MV.layers[t.dataset.mvl][t.dataset.mvk] = t.checked; mvSaveLayers(); });
 $("#mvLayers").addEventListener("click", e => { const b = e.target.closest("[data-mvlall],[data-mvlnone]"); if (!b) return; const key = b.dataset.mvlall || b.dataset.mvlnone, on = !!b.dataset.mvlall;
   $("#mvLayers").querySelectorAll(`[data-mvl="${key}"]`).forEach(c => { c.checked = on; MV.layers[key][c.dataset.mvk] = on; }); mvSaveLayers(); });
 $("#mvGhost").addEventListener("change", () => mvPaint());
 $("#mvView").addEventListener("dragover", e => e.preventDefault());
-$("#mvView").addEventListener("drop", e => { e.preventDefault(); const f = [...e.dataTransfer.files].find(x => /\.ifc$/i.test(x.name)); if (f){ mvState().ifc = f.name; markDirty(); mvLoadIfc(f); } });
+$("#mvView").addEventListener("drop", e => { e.preventDefault(); const f = [...e.dataTransfer.files].find(x => /\.ifc$/i.test(x.name)); if (f){ mvState()[MV.cur === "act" ? "ifcAct" : "ifc"] = f.name; markDirty(); mvLibs().then(() => mvLoadIfc(f)); } });
 
 /* --- Enganches con la app: selección, cambios y nuevo presupuesto --- */
 {
@@ -3822,8 +3870,8 @@ if (location.hash === "#modelo" && !MV_POP){
 if (!MV_POP){
   window.__srg = {
     get P(){ return P; }, get BASE(){ return BASE; }, get sel(){ return sel; },
-    get file(){ return MV.file || null; },
-    setFile(f){ MV.file = f; },
+    fileOf(k){ return (MV.files && MV.files[k]) || (MV.slots[k] && MV.slots[k].file) || null; },
+    setFile(f, k){ MV.files = Object.assign(MV.files || {}, { [k || "proj"]: f }); },
     hello(){ MV.winOk = true; },
     select(itemId, tags){ mvShowInTree(itemId, tags); window.focus && 0; },
     markDirty(){ markDirty(); }, renderAll(){ renderAll(); },
