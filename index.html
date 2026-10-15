@@ -2948,6 +2948,25 @@ function renderDetailKeepFocus(field, li){
   const el = document.querySelector(sel2); if (el){ el.focus(); if (el.select) el.select(); }
 }
 $("#detail").addEventListener("keydown", e => {
+  // Flechas: moverse entre celdas de las líneas de medición, como en una hoja de cálculo
+  if (/^Arrow(Up|Down|Left|Right)$/.test(e.key) && e.target.dataset.lf && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.target.closest("#measTable")){
+    const t = e.target, tr = t.closest("tr"), k = e.key;
+    if (t.list && t.value && (k === "ArrowUp" || k === "ArrowDown")) return;   // desplegable de perfiles abierto
+    const cells = tr => [...tr.querySelectorAll("input[data-lf]:not([disabled])")];
+    let dest = null;
+    if (k === "ArrowUp" || k === "ArrowDown"){
+      let r = tr;
+      do { r = k === "ArrowUp" ? r.previousElementSibling : r.nextElementSibling; } while (r && !r.querySelector(`[data-lf="${t.dataset.lf}"]`));
+      dest = r && r.querySelector(`[data-lf="${t.dataset.lf}"]`);
+    } else {
+      const v = t.value || "", s = t.selectionStart, en = t.selectionEnd, all = s === 0 && en === v.length;
+      if (k === "ArrowLeft" && !(all || (s === 0 && en === 0))) return;          // dentro del texto: mueve el cursor
+      if (k === "ArrowRight" && !(all || (s === v.length && en === v.length))) return;
+      const c = cells(tr), i = c.indexOf(t); dest = c[i + (k === "ArrowLeft" ? -1 : 1)];
+    }
+    if (dest){ e.preventDefault(); dest.focus(); if (dest.select) dest.select(); }
+    return;
+  }
   if (e.key === "Enter" && e.target.dataset.lf){
     e.preventDefault();
     const tr = e.target.closest("tr"), f = findItem(sel.item);
