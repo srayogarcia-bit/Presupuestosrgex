@@ -2015,7 +2015,7 @@ function fsStatus(){
   if (!FS.ok){ el.innerHTML = `<a href="#" data-act="fsReconnect" class="warnlink">⚠ Carpeta sin conectar: pulsa para permitir el acceso</a>`; return; }
   if (!P.file){ el.innerHTML = `Sin expediente · <a href="#" data-act="misPresupuestos">guardar en un expediente</a>`; return; }
   const t = FS.savedAt ? FS.savedAt.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "";
-  el.innerHTML = FS.err ? `<span class="warnlink">⚠ No se pudo guardar en ${esc(P.file.dir)}</span>` : `📁 ${esc(P.file.dir)}${P.file.sub ? " / " + esc(P.file.sub) : ""} · ${esc(P.file.name)}${t ? " · guardado " + t : ""}`;
+  el.innerHTML = FS.err ? `<span class="warnlink">⚠ No se pudo guardar en ${esc(P.file.dir)}</span>` : `📁 ${esc(P.file.dir)}${P.file.sub ? " / " + esc(P.file.sub) : ""} · ${esc(P.file.name)}${t ? " · guardado " + t : ""}${P.exp ? ` · <span title="${esc([P.exp.promotor, P.exp.direccion, P.exp.refcat].filter(Boolean).join(" · "))}">ficha ✓ ${esc(P.exp.promotor || "")}</span>` : ""}`;
 }
 async function fsInit(){
   if (!fsSupported()) return fsStatus();
@@ -2079,6 +2079,7 @@ async function fsWrite(force){
     if (!force && FS.mt[key] && cur.lastModified > FS.mt[key] + 1500) return fsConflict(cur);
     const w = await fh.createWritable(); await w.write(JSON.stringify(P, null, 1)); await w.close();
     FS.mt[key] = (await fh.getFile()).lastModified; FS.savedAt = new Date(); FS.err = false;
+    fichaPush();
   } catch(e){ FS.err = true; if (e.name === "NotAllowedError") FS.ok = false; }
   fsStatus();
 }
@@ -2102,6 +2103,7 @@ async function fsOpen(dir, name, sub){
     const np = JSON.parse(await f.text());
     if (!np || !Array.isArray(np.chapters)) throw new Error("formato");
     P = Object.assign(newProject(), np); P.file = { dir, sub: sub || "", name }; ensureIds(P);
+    await fichaApply(dir, false); fichaLast = "";
     FS.mt[fsKey()] = f.lastModified; FS.savedAt = new Date(f.lastModified); FS.err = false;
     sel = { chap: P.chapters[0] ? P.chapters[0].id : null, item: null };
     $("#baseBody").innerHTML = ""; renderAll(); renderBase();
@@ -2114,7 +2116,7 @@ async function fsList(){
   for await (const [name, h] of FS.root.entries()){
     if (h.kind !== "directory" || /^[._]/.test(name)) continue;
     const files = [], exp = EXP_RE.test(name), subs = [];
-    const scan = async (dh, sub) => { for await (const [fn, fh] of dh.entries()) if (fh.kind === "file" && /\.srgex\.json$/i.test(fn)) files.push({ name: fn, sub }); };
+    const scan = async (dh, sub) => { for await (const [fn, fh] of dh.entries()) if (fh.kind === "file" && /\.srgex\.json$/i.test(fn) && fn.toLowerCase() !== FICHA_NAME) files.push({ name: fn, sub }); };
     try {
       await scan(h, "");
       if (exp){
@@ -2175,10 +2177,62 @@ actions.misPresupuestos = async function(){
       sel = { chap: null, item: null }; $("#baseBody").innerHTML = ""; renderAll(); renderBase();
     }
     P.file = { dir, sub: target.name, pdf: target.pdf, name }; FS.mt[fsKey()] = 0;
+    const conFicha = await fichaApply(dir, isNew); fichaLast = ""; renderAll();
     await fsWrite(true); markDirty();
-    toast(`${isNew ? "Presupuesto nuevo creado" : "Guardado"} en ${dir}${target.name ? " / " + target.name : ""}`);
+    toast(`${isNew ? "Presupuesto nuevo creado" : "Guardado"} en ${dir}${target.name ? " / " + target.name : ""}${conFicha ? " · enlazado con la ficha del expediente" : ""}`);
   };
 };
+/* ===== Ficha del expediente (ArchiDesk): 1_…/expediente.srgex.json =====
+   Al abrir o crear un presupuesto en un expediente se leen de la ficha la denominación, el promotor y el
+   emplazamiento. Al guardar, el PEM, el de contrata, el general, el IVA y la base de precios se escriben en
+   la ficha (bloque «economico»); ArchiDesk los recoge sin pisarlos. Solo se toca ese bloque y «origen». */
+const FICHA_NAME = "expediente.srgex.json";
+async function fichaHandle(dir){
+  const dh = await FS.root.getDirectoryHandle(dir);
+  for await (const [n, c] of dh.entries()) if (c.kind === "directory" && /^1_/.test(n)){
+    try { return await c.getFileHandle(FICHA_NAME); } catch(e){ return null; }
+  }
+  return null;
+}
+async function fichaRead(dir){
+  try { const fh = await fichaHandle(dir); if (!fh) return null; return JSON.parse(await (await fh.getFile()).text()); } catch(e){ return null; }
+}
+function fichaResumen(j){
+  const e = j.emplazamiento || {}, pr = j.promotor || {}, id = j.identificacion || {};
+  return { codigo: id.codigo || "", denominacion: id.denominacion || "", promotor: pr.nombre || "", nif: pr.nif || "",
+    direccion: [e.direccion, e.municipio].filter(Boolean).join(", "), municipio: e.municipio || "",
+    refcat: (e.refCatastrales || [])[0] || "", lugarFirma: (j.tramitacion && j.tramitacion.lugarFirma) || "" };
+}
+/* isNew: presupuesto recién creado en el expediente (toma también la denominación y el IVA de la ficha) */
+async function fichaApply(dir, isNew){
+  const j = FS.root && FS.ok ? await fichaRead(dir) : null;
+  if (!j){ P.exp = null; return false; }
+  P.exp = fichaResumen(j);
+  const nombreAuto = !P.name || P.name === "Presupuesto sin título" || P.name === dir.replace(/^\d{4}_\d+_[A-Za-z]+_?/, "").replace(/_/g, " ");
+  if ((isNew || nombreAuto) && P.exp.denominacion) P.name = P.exp.denominacion;
+  P.doc = Object.assign({ lugar: "", fecha: "", firmas: "Propietario; El arquitecto", firmasCert: "La dirección facultativa; El contratista", tipo: "privado" }, P.doc || {});
+  if (!P.doc.lugar) P.doc.lugar = P.exp.lugarFirma || P.exp.municipio || "";
+  const ec = j.economico || {};
+  if (isNew && ec.iva != null && ec.iva !== "" && !isNaN(+ec.iva)) P.iva = +ec.iva;
+  return true;
+}
+let fichaLast = "";
+async function fichaPush(){
+  if (!P.file || !FS.root || !FS.ok) return;
+  const T = totals(P);
+  if (!T.pem) return;   // un presupuesto vacío no borra el PEM que hubiera en la ficha
+  const ec = { pem: T.pem, contrata: T.base, general: T.total, iva: parseNum(P.iva), basePrecios: P.baseName || "", fechaPresupuesto: new Date().toISOString().slice(0, 10) };
+  const sig = [P.file.dir, P.file.sub, P.file.name, ec.pem, ec.contrata, ec.general, ec.iva, ec.basePrecios].join("|");
+  if (sig === fichaLast) return;
+  try {
+    const fh = await fichaHandle(P.file.dir); if (!fh) return;
+    const j = JSON.parse(await (await fh.getFile()).text());
+    j.economico = Object.assign({}, j.economico || {}, ec);
+    j.origen = Object.assign({}, j.origen || {}, { economico: "Presupuestos SRGex · " + (P.file.sub ? P.file.sub + "/" : "") + P.file.name, economicoFecha: new Date().toISOString() });
+    const w = await fh.createWritable(); await w.write(JSON.stringify(j, null, 2)); await w.close();
+    fichaLast = sig;
+  } catch(e){ /* sin ficha o sin permiso: el presupuesto se guarda igual */ }
+}
 /* Exportaciones: si el presupuesto está en un expediente, los archivos van a esa carpeta */
 async function fsSaveExport(filename, data){
   if (!(P.file && FS.root && FS.ok)) return false;
